@@ -1,0 +1,365 @@
+{
+ "name": "Riverlands",
+ "seed": 2718,
+ "radius": 600000.0,
+ "shape": {
+  "ocean": true,
+  "land": 0.45,
+  "continents": 3,
+  "warp": 0.9,
+  "coast": 0.6,
+  "islands": 0.25,
+  "size_var": 0.5,
+  "bias": 0.0
+ },
+ "relief": {
+  "high": 6000.0,
+  "low": -4000.0,
+  "mountains": 0.6,
+  "mountain_size": 1.0,
+  "mountain_area": 0.5,
+  "ranges": 0.5,
+  "hills": 0.4,
+  "hill_size": 1.0,
+  "plains": 0.3,
+  "roughness": 0.3,
+  "shelf": 0.2,
+  "sharpness": 1.0,
+  "canyons": 0.0,
+  "canyon_depth": 2500.0,
+  "canyon_width": 60.0
+ },
+ "volcanoes": {
+  "count": 0,
+  "seed": 1,
+  "size_km": 300.0,
+  "height": 8000.0,
+  "caldera": 0.5,
+  "size_var": 0.5
+ },
+ "features": [],
+ "plateaus": {
+  "amount": 0.3,
+  "height": 1200,
+  "size": 1.0,
+  "edge": 0.4,
+  "flat": 0.8
+ },
+ "water": {
+  "rivers": 0.55,
+  "width": 4,
+  "depth": 80,
+  "valleys": 0.6,
+  "valley_width": 8
+ },
+ "cracks": {
+  "amount": 0.0,
+  "style": "lines",
+  "count": 8,
+  "curvy": 0.3,
+  "width": 6.0,
+  "depth": 300.0,
+  "ridges": 0.5,
+  "cell_size": 250.0,
+  "seed": 1
+ },
+ "craters": {
+  "count": 0,
+  "seed": 1,
+  "min_km": 4.0,
+  "max_km": 120.0,
+  "size_mix": 1.8,
+  "depth": 1.0,
+  "fresh": 0.4,
+  "ejecta": 0.5,
+  "rays": 0.5
+ },
+ "colors": {
+  "stops": [
+   [
+    -4000.0,
+    [
+     40,
+     50,
+     58
+    ]
+   ],
+   [
+    -200.0,
+    [
+     86,
+     92,
+     84
+    ]
+   ],
+   [
+    0.0,
+    [
+     84,
+     106,
+     58
+    ]
+   ],
+   [
+    600.0,
+    [
+     82,
+     104,
+     56
+    ]
+   ],
+   [
+    1700.0,
+    [
+     116,
+     114,
+     74
+    ]
+   ],
+   [
+    2900.0,
+    [
+     124,
+     110,
+     90
+    ]
+   ],
+   [
+    4300.0,
+    [
+     112,
+     106,
+     102
+    ]
+   ]
+  ],
+  "jitter": 250.0,
+  "patches": 0.4,
+  "patch_size": 1.0,
+  "patch_color": [
+   150,
+   132,
+   92
+  ],
+  "rock": [
+   106,
+   100,
+   94
+  ],
+  "rock_slope": [
+   16.0,
+   32.0
+  ],
+  "rock_amount": 1.0,
+  "ice": [
+   236,
+   240,
+   246
+  ],
+  "cap_north": 72.0,
+  "cap_south": 72.0,
+  "cap_ragged": 0.5,
+  "sea_ice": 1.0,
+  "snow_line": 5400.0,
+  "snow_slope": 28.0,
+  "shallow": [
+   52,
+   118,
+   138
+  ],
+  "deep": [
+   16,
+   36,
+   72
+  ],
+  "water_depth": 600.0,
+  "dry": {
+   "amount": 0.6,
+   "lat": 24,
+   "width": 10,
+   "color": [
+    178,
+    152,
+    104
+   ]
+  },
+  "cold": {
+   "amount": 0.4,
+   "lat": 55,
+   "color": [
+    116,
+    116,
+    96
+   ]
+  },
+  "crater_floor": [
+   70,
+   70,
+   72
+  ],
+  "crater_floor_amount": 0.0,
+  "ejecta_color": null,
+  "volcano_color": [
+   64,
+   56,
+   52
+  ],
+  "volcano_amount": 0.5,
+  "brightness": 0.0,
+  "contrast": 1.0,
+  "saturation": 1.0,
+  "river_color": null,
+  "river_amount": 1.0,
+  "crack_color": [
+   120,
+   76,
+   56
+  ],
+  "crack_amount": 0.7
+ },
+ "normal_strength": 2.0,
+ "files": {
+  "height": "Riverlands_height.dds",
+  "color": "Riverlands_color.dds",
+  "normal": "Riverlands_normal.dds"
+ },
+ "preview": {
+  "tilt": 0,
+  "view_lat": 20,
+  "view_lon": 175
+ },
+ "atmosphere": {
+  "enabled": true,
+  "atmosphereStartRadiusScale": 1.0,
+  "HR": 3.84,
+  "HM": 1.0,
+  "m_betaR": [
+   0.0153408,
+   0.0357075,
+   0.0875489
+  ],
+  "BETA_MSca": [
+   0.0121406,
+   0.0121406,
+   0.0121406
+  ],
+  "m_mieG": 0.85,
+  "useOzone": true,
+  "ozoneAbsorption": [
+   0.000493594,
+   0.00142889,
+   6.45469e-05
+  ],
+  "ozoneHeight": 20.0,
+  "ozoneFalloff": 12.0,
+  "averageGroundReflectance": 0.1,
+  "multipleScattering": true,
+  "godrayStrength": 0.7,
+  "configPoints": [
+   {
+    "altitude": 0.0,
+    "skyExposure": 0.2,
+    "skyAlpha": 1.0,
+    "skyExtinctionTint": 1.0,
+    "scatteringExposure": 0.2,
+    "extinctionThickness": 1.0,
+    "postProcessAlpha": 1.0,
+    "postProcessDepth": 0.0,
+    "extinctionTint": 1.0
+   }
+  ],
+  "sun": "Sun",
+  "sun_color": [
+   255,
+   255,
+   255
+  ],
+  "cloud_integration": true,
+  "flat_model": true,
+  "eclipse_casters": "",
+  "sun_angle": 60.0,
+  "view": "planet",
+  "extra": [
+   [
+    "flattenScaledSpaceMesh",
+    "0"
+   ],
+   [
+    "rimBlend",
+    "20"
+   ],
+   [
+    "rimpower",
+    "600"
+   ],
+   [
+    "specR",
+    "0"
+   ],
+   [
+    "specG",
+    "0"
+   ],
+   [
+    "specB",
+    "0"
+   ],
+   [
+    "shininess",
+    "0"
+   ],
+   [
+    "noonSunlightExtinctionStrength",
+    "1"
+   ],
+   [
+    "cloudColorMultiplier",
+    "1"
+   ],
+   [
+    "cloudScatteringMultiplier",
+    "0.2"
+   ],
+   [
+    "cloudSkyIrradianceMultiplier",
+    "0"
+   ],
+   [
+    "volumetricsColorMultiplier",
+    "1"
+   ],
+   [
+    "EVEIntegration_preserveCloudColors",
+    "False"
+   ],
+   [
+    "adjustScaledTexture",
+    "False"
+   ],
+   [
+    "scaledLandBrightnessAdjust",
+    "1"
+   ],
+   [
+    "scaledLandContrastAdjust",
+    "1"
+   ],
+   [
+    "scaledLandSaturationAdjust",
+    "1"
+   ],
+   [
+    "scaledOceanBrightnessAdjust",
+    "1"
+   ],
+   [
+    "scaledOceanContrastAdjust",
+    "1"
+   ],
+   [
+    "scaledOceanSaturationAdjust",
+    "1"
+   ]
+  ]
+ }
+}

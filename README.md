@@ -1,2 +1,306 @@
-# TerraStudio
-Terra Studio makes rocky planets and moons for Kerbal Space Program planet mods (Kopernicus): a height map, a colour map and a normal map that fit together, plus a ready Kopernicus config with the right offset and deformity.
+# Terra Studio
+
+![Terra Studio](docs/studio.png)
+
+Terra Studio makes rocky planets and moons for Kerbal Space Program planet mods
+(Kopernicus): a height map, a colour map and a normal map that fit together, plus a
+ready Kopernicus config with the right offset and deformity. Continents and oceans,
+mountain ranges, plateaus, canyons, rivers and valleys, craters, volcanoes, cracks,
+polar caps and snow: you set them with sliders and see the planet change a moment later.
+It also makes a Scatterer atmosphere for the planet and shows how it looks in game.
+
+Everything is made from 3D noise on the sphere, so there is no seam at the edge of the
+map and nothing pinches together at the poles.
+
+It is the sister program of Gas Giant Studio and works the same way.
+
+![Example planets](docs/presets.png)
+
+## Download and start
+
+**Windows:** download `TerraStudio-<version>-windows-x64.zip`, unzip it anywhere and
+start `TerraStudio.exe`. You don't need to install Python.
+
+**From source (any system):** install Python 3.9 or newer, then
+
+```
+pip install numpy pillow
+python terrain_ui.py
+```
+
+On Windows you can also double-click `Run Terra Studio.bat`. It installs numpy and
+Pillow the first time.
+
+Some antivirus programs are suspicious of new, unsigned apps made with PyInstaller. If
+yours complains, you can run Terra Studio from source instead; it's the same program.
+
+## What it can do
+
+- **Shape:** ocean on or off, how much land there is, how many continents, how bent
+  they are (Twist), how different in size they are, whether the land gathers near the
+  equator or near the poles, how ragged the coasts are, and islands. Without an ocean,
+  "land" means the highlands and the rest are low basins, like the dark plains on a moon.
+- **Relief:** the height range in metres (highest point and lowest point), mountains
+  (long ranges, their size, area and sharpness), ranges that follow the coasts, hills,
+  flat plains, fine roughness, the width of the shallow shelf around the coasts, and how
+  strong the relief looks in the normal map.
+- **Landforms:**
+  - **Rivers and valleys:** water runs downhill from all the land, gathers into rivers
+    that join and get wider downstream, and ends in the sea (or the lowest basins on a dry
+    world). Rivers cut a channel and wear a valley around it. The river network is worked
+    out on a 512 x 256 version of the planet, so it is the same at every build size. River
+    colour: water, or your own colour (a dry riverbed, say).
+  - **Plateaus:** raised tablelands with flat tops and steep, ragged edges.
+  - **Canyons:** big rift valleys with a flat floor, a depth and a width in km.
+  - **Cracks:** long crossing lines like on Europa, or a network of polygon cells. Each
+    crack is a groove with raised edges if you like, and gets its own colour.
+  - **Volcanoes:** random shield volcanoes (count, size, height, summit crater).
+- **Craters:** how many, the smallest and largest size in km, the mix of small and big
+  ones, depth, how many are fresh and how many old and worn down, bright ejecta and soft
+  ray streaks around the young ones. Big craters get a flat floor and a central peak.
+  Rims are soft, never outlined. Crater floors and ejecta can have their own colours.
+- **Features:** your own craters, basins, volcanoes, mountains and plateaus exactly where you want
+  them. Turn on **Place features** above the preview, pick the kind and click the flat map
+  or the globe. Drag to move, right-click to remove. Each one has a card with its
+  latitude, longitude, size in km, height or depth and freshness.
+- **Colours:** a colour for each height (sea floor, lowlands, highlands, peaks), a height
+  blur so the colours don't follow contour lines, patches, a dry belt and a cold tint by
+  latitude, rock on steep slopes, separate north and south polar caps with a ragged edge,
+  how far sea ice reaches, a snow line that drops towards the poles, the shallow and deep
+  water colours, volcanic rock, and brightness, contrast and saturation for the whole map.
+- **Colour picker:** click any colour box for a colour picker with a colour square, hex
+  and RGB, the planet's other colours, recent colours, **Pick from screen** (an eyedropper
+  for anything on your screen) and **Pick from picture...**. **Colours from picture...**
+  under the height colours takes a whole set at once: click the low end, then the high end
+  of a line across a photo (a beach up to a snowy peak, say), and the colours along the
+  line become the colours by height.
+- **Atmosphere:** a Scatterer atmosphere with Scatterer's own values (HR, m_betaR, HM,
+  BETA_MSca, m_mieG, ozone, config points with their exposures and so on). Start from the
+  stock Kerbin, Duna, Eve or Laythe air, fitted to your planet's size, or from the planet's
+  own colours. The **In game** view shows the planet with that atmosphere the way KSP's
+  map view does, relief and all, as a whole planet or close up at the day-side or sunset
+  edge. **Load from Scatterer config...** reads an existing atmo.cfg, and the tab gives
+  you the atmo.cfg and the planet list entry to paste or save.
+- **Live preview:** the planet as a globe and a flat map, updated by itself after every
+  change. Drag the globe to turn it, double-click to reset it. Move the mouse over the map
+  to read the latitude and the height there. **Show** switches between colour, colour
+  without shading, and the height map.
+- **Randomize:** every tab has its own Randomize button. **Surprise me** randomizes
+  everything at once, and **Undo** (or Ctrl+Z) goes back.
+- **Sizes:** 512, 1024, 2048, 4096 and 8192 pixels wide. A 4096 map takes about a minute.
+
+![Landforms](docs/landforms.png)
+
+![Placing features](docs/features.png)
+
+![Colour picker](docs/colour_picker.png)
+
+![Atmosphere](docs/atmosphere.png)
+
+## Export
+
+**Build** makes the full-size maps in `out/<planet>/`. **Export...** writes the game files
+from a build: you choose the folder, the file names, the formats and the size.
+
+![Export](docs/export.png)
+
+| File | Formats | In Kopernicus |
+|---|---|---|
+| Height map | DDS L8 (8-bit greyscale), PNG 16-bit or 8-bit | `VertexHeightMap` |
+| Fine height map | DDS L8 | a second `VertexHeightMap` |
+| Colour map | DDS BC1/DXT1, BC3/DXT5, BC7, PNG, JPG, TGA, BMP | `VertexColorMap` and the `ScaledVersion` texture |
+| Normal map | DDS DXT5nm or BC5, PNG | `ScaledVersion` normals |
+| Preview sheet | PNG, JPG | |
+| Kopernicus config | .cfg | paste its nodes into your planet's `Body` |
+| Scatterer config | .cfg | the atmosphere (`atmo.cfg`) and `planetsList_<planet>.cfg` |
+
+An 8-bit height map only has 256 steps. On a planet with 10 km of relief that is 40 m
+per step, and the ground looks terraced up close. The fine height map holds what falls
+between the steps; added as a second `VertexHeightMap` with a deformity of 1/255 of the
+first, the two together are as smooth as a 16-bit map (about 0.1 m). The exported config
+does this for you:
+
+```
+PQS
+{
+	Mods
+	{
+		VertexHeightMap
+		{
+			map = MyMod/Textures/World_height.dds
+			offset = -4542.2
+			deformity = 10247.1
+			scaleDeformityByRadius = false
+			order = 20
+			enabled = true
+		}
+		VertexHeightMap
+		{
+			map = MyMod/Textures/World_heightfine.dds
+			offset = 0
+			deformity = 40.18
+			scaleDeformityByRadius = false
+			order = 21
+			enabled = true
+		}
+		VertexColorMap
+		{
+			map = MyMod/Textures/World_color.dds
+			order = 9999993
+			enabled = true
+		}
+	}
+}
+ScaledVersion
+{
+	Material
+	{
+		texture = MyMod/Textures/World_color.dds
+		normals = MyMod/Textures/World_normal.dds
+	}
+}
+```
+
+With an ocean, the config also gets an `Ocean` node in your water colours. The body
+then needs a template that has an ocean (for example Kerbin without `removeOcean`).
+
+**Path in config** in the export window is the folder under `GameData` the texture paths
+in the config start with, for example `MyMod/Textures`. It fills itself in when you export
+straight into a folder inside `GameData`.
+
+Which DDS format to pick:
+
+| Map | Format | When |
+|---|---|---|
+| Height, fine height | L8 | what Kopernicus' `VertexHeightMap` reads |
+| Colour | BC1 / DXT1 | the default; what KSP uses out of the box |
+| Colour | BC7 | best quality, twice the file size |
+| Colour | BC3 / DXT5 | when you need an alpha channel |
+| Normal | DXT5nm | the default; for KSP's own planet shaders |
+| Normal | BC5 | for shaders that ask for a BC5 normal map |
+
+BC5 and BC7 need a texture loader that can read them, such as KSPTextureLoader.
+
+DDS files are flipped upside down on export, because KSP expects that. Turn it off in
+the export window if you need the files for something else.
+
+### Scatterer atmosphere
+
+The Atmosphere tab writes a normal Scatterer config. The atmosphere goes into any .cfg
+file in your mod, for example `GameData/MyMod/Scatterer/Planets/World/atmo.cfg`:
+
+```
+Scatterer_atmosphere
+{
+	Atmo
+	{
+		name = World
+		atmosphereStartRadiusScale = 1
+		HR = 3.84
+		HM = 1
+		m_betaR = 0.0153408,0.0357075,0.0875489
+		BETA_MSca = 0.0121406,0.0121406,0.0121406
+		m_mieG = 0.85
+		...
+		configPoints
+		{
+			Item
+			{
+				altitude = 0
+				skyExposure = 0.2
+				...
+			}
+		}
+	}
+}
+```
+
+Scatterer only draws planets that are in its planet list, so the tab also gives you the
+entry for that:
+
+```
+@Scatterer_planetsList:AFTER[Kopernicus]
+{
+	@scattererCelestialBodies
+	{
+		Item
+		{
+			celestialBodyName = World
+			transformName = World
+			hasOcean = False
+			mainSunCelestialBody = Sun
+			...
+		}
+	}
+}
+```
+
+The units are Scatterer's: HR, HM and the ozone height in km, the scattering values per km.
+Scatterer works out the top of the atmosphere from them and takes the radius from the
+planet itself (here, the radius on the Planet tab). **Fit to this planet's size** scales
+the stock values so the air looks the same on your planet as on Kerbin, Duna, Eve or
+Laythe: the heights grow with the radius and the scattering values shrink by the same
+amount. The map view uses the last config point (the highest altitude), and so does the
+In game view. Scatterer builds its tables in game the first time it sees new values,
+which takes a few seconds.
+
+**Save atmo.cfg...** starts in your mod's `Scatterer/Planets/<planet>` folder when there is
+one, backs up a file it replaces into `backups/`, and offers to save the planet list entry
+next to it. When you turn the atmosphere on and your mod already has a Scatterer config for
+a planet of the same name, it asks whether to start from that.
+
+`hasOcean` stays `False`: Scatterer's own ocean needs an ocean config of its own, so the
+planet keeps its Kopernicus ocean.
+
+The In game view uses the build when it is up to date (sharper), otherwise the live
+preview. It is a close match, not a copy of the game: KSP's own lighting, EVE clouds,
+godrays and the rim and shine values are not in it. With an atmosphere, the big globe on
+the preview sheet shows it too.
+
+## Presets
+
+Every planet is one small JSON file in `presets/`. Eight examples come with it:
+
+| Preset | Look |
+|---|---|
+| Terran | oceans, continents, mountain ranges and polar caps |
+| Archipelago | a water world with island chains |
+| Riverlands | continents with rivers and valleys, plateaus, a dry belt and a Scatterer atmosphere |
+| RedDesert | a dry, Mars-like world with highlands, basins and polar caps |
+| RiftDesert | the same with canyons, big volcanoes and an impact basin |
+| GreyMoon | an airless moon with craters, rays and dark plains |
+| IceMoon | a bright icy moon |
+| CrackedIce | an icy moon covered in long crossing cracks, like Europa |
+
+**New...** starts a planet as a copy of the one you have open, with a new seed. Builds go
+to `out/<name>/` (4096) and `out/<name>_<size>/` (other sizes). Every build also saves the
+settings it was made with, and the window tells you when the settings changed since.
+
+## Command line
+
+Everything the window does also works from the command line, which is handy for scripts.
+
+```
+python terrain.py make Terran --res 4096
+python terrain.py export Terran --to export --res 4096 --config --config-path MyMod/Textures
+python terrain.py new MyWorld --template GreyMoon
+```
+
+`export` options: `--height dds|png|png8|none`, `--fine dds|png|none`,
+`--color dds|bc1|bc3|bc7|png|jpg|tga|bmp|none`, `--normal dds|bc5|png|none`,
+`--preview png|jpg|none`, `--config`, `--config-path PATH`, `--atmo cfg|none`,
+`--size 2048`, `--no-flip`. The Scatterer config is written when the planet has an
+atmosphere, unless you give `--atmo none`.
+
+With the Windows download, use `TerraStudio.exe` in place of `python terrain.py`.
+
+## Requirements
+
+- Python 3.9 or newer with numpy and Pillow 11.2 or newer (only when you run it from source)
+- About 1 GB of free memory for a 4096 build, about 3 GB for 8192
+
+## Building the Windows version
+
+Double-click `build_release.bat`. It makes its own Python environment in `.buildenv`,
+installs numpy, Pillow and PyInstaller there, builds `TerraStudio.exe`, tests it with a
+small build and zips it to `release/TerraStudio-<version>-windows-x64.zip`.
