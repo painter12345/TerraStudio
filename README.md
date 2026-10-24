@@ -52,6 +52,9 @@ yours complains, you can run Terra Studio from source instead; it's the same pro
     colour: water, or your own colour (a dry riverbed, say).
   - **Plateaus:** raised tablelands with flat tops and steep, ragged edges.
   - **Canyons:** big rift valleys with a flat floor, a depth and a width in km.
+  - **Equatorial ridge:** one long mountain wall around the planet, like on Iapetus, Pan or
+    Atlas. Height, width, how far around it goes, where it sits (centre longitude, latitude
+    shift, tilt), gaps, a ragged crest and how much it weaves. Craters still cut into it.
   - **Cracks:** long crossing lines like on Europa, or a network of polygon cells. Each
     crack is a groove with raised edges if you like, and gets its own colour.
   - **Volcanoes:** random shield volcanoes (count, size, height, summit crater).
@@ -74,6 +77,13 @@ yours complains, you can run Terra Studio from source instead; it's the same pro
   under the height colours takes a whole set at once: click the low end, then the high end
   of a line across a photo (a beach up to a snowy peak, say), and the colours along the
   line become the colours by height.
+- **Lava plates:** for worlds close to their star, the crust is torn into tilted plates with
+  glowing lava between them. The plates get smaller and the lava channels wider towards the
+  hottest point, which is an open lava sea with floating rafts of crust. **All over** tears the
+  whole crust instead (for tidally heated moons), and lava pools can be added anywhere in the
+  torn area. The glow goes into an emissive map that the previews show too.
+- **Lava oceans and rivers:** fill the oceans with lava (floating crust, glowing shores) and let
+  the rivers, cracks and volcanoes glow. Everything that glows goes into one emissive map.
 - **Atmosphere:** a Scatterer atmosphere with Scatterer's own values (HR, m_betaR, HM,
   BETA_MSca, m_mieG, ozone, config points with their exposures and so on). Start from the
   stock Kerbin, Duna, Eve or Laythe air, fitted to your planet's size, or from the planet's
@@ -81,6 +91,20 @@ yours complains, you can run Terra Studio from source instead; it's the same pro
   map view does, relief and all, as a whole planet or close up at the day-side or sunset
   edge. **Load from Scatterer config...** reads an existing atmo.cfg, and the tab gives
   you the atmo.cfg and the planet list entry to paste or save.
+- **Clouds:** volumetric clouds for EVE and True Volumetric Clouds, swirled and streaky like
+  Edmunds': a fair-weather layer, weather systems that come and go over the hours, and high
+  cirrus. Set the cloud cover in percent of the planet, or press **Randomize clouds**. The
+  **Clouds** view shows them over the planet. Export writes all the maps and the EVE config.
+- **Aurora:** polar lights around each magnetic pole: curtains with rays, a lower fringe
+  and bright cores, plus the red and purple top part. Set the magnetic tilt, the size and
+  wobble of the oval, the number, spacing and width of the curtains, gaps, rays, glow,
+  brightness and all six colours. The **Aurora** view shows both poles from above. Export
+  writes the two textures and an EVE config that stacks them as thin layers at different
+  heights, so the aurora has depth when you see it from the side.
+- **Rings:** a Kopernicus ring with wide zones, ringlets, gaps, soft edges and three
+  colours (auto from the planet's colours). The Rings tab shows the planet with its rings
+  and ring shadow. Build writes the ring texture; Export saves it and adds the Rings node to
+  the Kopernicus config.
 - **Live preview:** the planet as a globe and a flat map, updated by itself after every
   change. Drag the globe to turn it, double-click to reset it. Move the mouse over the map
   to read the latitude and the height there. **Show** switches between colour, colour
@@ -95,7 +119,15 @@ yours complains, you can run Terra Studio from source instead; it's the same pro
 
 ![Colour picker](docs/colour_picker.png)
 
+![Lava plates](docs/lava.png)
+
+![Lava ocean and rivers](docs/molten.png)
+
 ![Atmosphere](docs/atmosphere.png)
+
+![Clouds](docs/clouds.png)
+
+![Aurora](docs/aurora.png)
 
 ## Export
 
@@ -184,6 +216,17 @@ BC5 and BC7 need a texture loader that can read them, such as KSPTextureLoader.
 DDS files are flipped upside down on export, because KSP expects that. Turn it off in
 the export window if you need the files for something else.
 
+### Lava glow
+
+A planet with anything that glows (lava plates, a lava ocean, lava rivers, glowing cracks or
+volcanoes) gets an emissive map in its build (`<name>_emissive.png`). Export
+writes it as DDS (BC1 / DXT1, or BC7) or PNG, and the Kopernicus config adds it as
+`VertexColorMapEmissive` with `blendMode = Additive`, once in the PQS mods and once in the
+ScaledVersion, so the lava glows close up and from orbit. With a lava ocean, the Ocean node is
+written in the lava colours with the same emissive map in its Mods. That needs Lt_Duckweed's
+001_DuckweedUtils (with Kopernicus and ModuleManager). It does not work with Parallax
+Continued or Scatterer oceans. **Glow** on the Lava tab sets how bright the map is.
+
 ### Scatterer atmosphere
 
 The Atmosphere tab writes a normal Scatterer config. The atmosphere goes into any .cfg
@@ -252,14 +295,58 @@ a planet of the same name, it asks whether to start from that.
 `hasOcean` stays `False`: Scatterer's own ocean needs an ocean config of its own, so the
 planet keeps its Kopernicus ocean.
 
-The In game view uses the build when it is up to date (sharper), otherwise the live
-preview. It is a close match, not a copy of the game: KSP's own lighting, EVE clouds,
+The In game view also shows the clouds, the aurora and the lava glow (switch each one off
+on the Atmosphere tab), and works without an atmosphere too. It uses the build when it is up
+to date (sharper), otherwise the live preview. It is a close match, not a copy of the game: KSP's own lighting, EVE clouds,
 godrays and the rim and shine values are not in it. With an atmosphere, the big globe on
 the preview sheet shows it too.
 
+### Clouds
+
+The Clouds tab writes, for every layer (`fair`, `sys0` to `sys3`, `cirrus`):
+
+- `<name>_<layer>_coverage.dds`: where the clouds are (BC4, the size set on the tab; half that
+  for cirrus).
+- `<name>_<layer>_type.dds`: which cloud type grows there (BC4, half size). Thin stratus where the
+  clouds are light, towering congestus in the thickest parts of the weather systems.
+- `<name>_<layer>_scaled.dds`: the layer seen from orbit (DXT5, half size).
+- `<name>_clouds.cfg`: the `EVE_CLOUDS` config with Edmunds' cloud types (Stratus, Cumulus,
+  Congestus), the weather systems' `timeSettings` (they take turns over the cycle) and the cirrus
+  layer.
+
+Put the textures where the config's texture path points (**Path in config** in the Export
+window) and the .cfg anywhere in your mod. It needs EVE, True Volumetric Clouds and
+StockVolumetricClouds. Big maps take a while: 4096 about a minute, 16384 about 15 to 20 minutes
+and a lot of memory.
+
+### Aurora
+
+The Aurora tab makes polar lights for EVE. Export writes three files:
+
+- `<name>_aurora.dds`: the lower, main part of the aurora (DXT5 with alpha, or PNG).
+- `<name>_aurora_top.dds`: the same curtains in the top colours.
+- `<name>_aurora.cfg`: an `EVE_CLOUDS` config with one layer per height. The lowest layers
+  use the main texture and the highest ones (**Top layers**) the top texture. Each layer
+  is a little more see-through than the one below it, from **Opacity** down to
+  **Highest layer opacity**.
+
+Put the textures where the config's texture path points (the **Path in config** in the
+Export window) and the .cfg anywhere in your mod. It needs EVE and StockVolumetricClouds (for the uvnoise texture
+and an empty coverage map that keeps the layers out of the volumetric clouds). The
+**Drift speed** is EVE's `speed`, so the aurora slowly turns around the pole. The tab
+also shows the config to copy.
+
+### Rings
+
+Tick **This planet has rings** on the Rings tab. Build writes `<name>_ring.png`, a strip
+with alpha whose left end is the outer edge of the ring (the way Kopernicus maps it).
+Export saves it as `<name>_ring.dds` (BC3 / DXT5 with alpha, or BC7) or PNG, and the
+Kopernicus config gets a `Rings` node with `innerRadius` and `outerRadius` (planet radius =
+1000), the tilt as `angle` and the texture path. The tab also shows the node to copy.
+
 ## Presets
 
-Every planet is one small JSON file in `presets/`. Eight examples come with it:
+Every planet is one small JSON file in `presets/`. Eleven examples come with it:
 
 | Preset | Look |
 |---|---|
@@ -271,6 +358,9 @@ Every planet is one small JSON file in `presets/`. Eight examples come with it:
 | GreyMoon | an airless moon with craters, rays and dark plains |
 | IceMoon | a bright icy moon |
 | CrackedIce | an icy moon covered in long crossing cracks, like Europa |
+| TornLava | a world close to its star, its day side ripped into lava plates around a lava sea |
+| LavaMoon | a small moon torn into plates all over, with lava pools |
+| MoltenWorld | an ordinary rocky planet with lava rivers, glowing volcanoes and a lava ocean |
 
 **New...** starts a planet as a copy of the one you have open, with a new seed. Builds go
 to `out/<name>/` (4096) and `out/<name>_<size>/` (other sizes). Every build also saves the
@@ -289,8 +379,9 @@ python terrain.py new MyWorld --template GreyMoon
 `export` options: `--height dds|png|png8|none`, `--fine dds|png|none`,
 `--color dds|bc1|bc3|bc7|png|jpg|tga|bmp|none`, `--normal dds|bc5|png|none`,
 `--preview png|jpg|none`, `--config`, `--config-path PATH`, `--atmo cfg|none`,
-`--size 2048`, `--no-flip`. The Scatterer config is written when the planet has an
-atmosphere, unless you give `--atmo none`.
+`--aurora dds|png|none`, `--clouds tvc|none`, `--emissive dds|bc7|png|none`, `--size 2048`, `--no-flip`. The Scatterer config is written when
+the planet has an atmosphere, unless you give `--atmo none`, and the aurora when it has
+one, unless you give `--aurora none`.
 
 With the Windows download, use `TerraStudio.exe` in place of `python terrain.py`.
 
