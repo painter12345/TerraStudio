@@ -102,7 +102,7 @@ def make_style(root):
     st.map('Accent.TButton', background=[('disabled', '#253246'), ('active', '#3a72c4')])
     st.configure('Small.TButton', padding=(5, 1))
     st.configure('TNotebook', background=BG, bordercolor=LINE, tabmargins=(4, 6, 4, 0))
-    st.configure('TNotebook.Tab', background=PANEL, foreground=DIM, padding=(9, 5), bordercolor=LINE)
+    st.configure('TNotebook.Tab', background=PANEL, foreground=DIM, padding=(5, 5), bordercolor=LINE)
     st.map('TNotebook.Tab', background=[('selected', BG)], foreground=[('selected', FG)])
     st.configure('TLabelframe', background=BG, bordercolor=LINE)
     st.configure('TLabelframe.Label', background=BG, foreground=DIM)
@@ -114,7 +114,7 @@ def make_style(root):
     st.configure('Horizontal.TScale', background=PANEL, troughcolor=FIELD, bordercolor=LINE)
     st.configure('TCheckbutton', background=BG, foreground=FG)
     st.map('TCheckbutton', background=[('active', BG)])
-    st.configure('Toolbutton', background=PANEL, foreground=DIM, padding=(10, 4))
+    st.configure('Toolbutton', background=PANEL, foreground=DIM, padding=(8, 4))
     st.map('Toolbutton', background=[('selected', '#2d5fa8'), ('active', '#2f3746')], foreground=[('selected', 'white')])
     st.configure('Horizontal.TProgressbar', background=ACC, troughcolor=FIELD, bordercolor=LINE, lightcolor=ACC, darkcolor=ACC)
     st.configure('Vertical.TScrollbar', background=PANEL, troughcolor=BG, arrowcolor=DIM, bordercolor=BG,
@@ -936,8 +936,8 @@ class SampleWin(tk.Toplevel):
 
 class ExportDialog(tk.Toplevel):
     KINDS = (('height', 'Height map'), ('heightfine', 'Fine height map'), ('color', 'Colour map'),
-             ('normal', 'Normal map'), ('preview', 'Preview sheet'), ('config', 'Kopernicus config'),
-             ('atmo', 'Scatterer config'))
+             ('normal', 'Normal map'), ('emissive', 'Emissive map (glow)'), ('preview', 'Preview sheet'), ('config', 'Kopernicus config'),
+             ('atmo', 'Scatterer config'), ('clouds', 'Clouds (EVE + TVC)'), ('aurora', 'Aurora (EVE)'), ('ring', 'Ring texture'))
     SIZES = ['Same as build', '8192 × 4096', '4096 × 2048', '2048 × 1024', '1024 × 512']
 
     def __init__(self, app, builds):
@@ -970,10 +970,11 @@ class ExportDialog(tk.Toplevel):
         ttk.Label(f, text='File name', style='Dim.TLabel').grid(row=3, column=1, sticky='w', pady=(12, 2))
         ttk.Label(f, text='Format', style='Dim.TLabel').grid(row=3, column=2, sticky='w', pady=(12, 2))
         self.rows = {}
-        defaults = {'height': True, 'heightfine': True, 'color': True, 'normal': True, 'preview': False, 'config': True, 'atmo': True}
+        defaults = {'height': True, 'heightfine': True, 'color': True, 'normal': True, 'preview': False, 'config': True, 'atmo': True, 'aurora': True, 'emissive': True, 'clouds': True, 'ring': True}
         hstem = self.stem('height')
         names = {'height': hstem, 'heightfine': hstem + 'fine', 'color': self.stem('color'), 'normal': self.stem('normal'),
-                 'preview': self.name + '_preview', 'config': self.name + '_kopernicus', 'atmo': self.name + '_atmo'}
+                 'preview': self.name + '_preview', 'config': self.name + '_kopernicus', 'atmo': self.name + '_atmo',
+                 'aurora': self.name + '_aurora', 'emissive': self.stem('emissive'), 'clouds': self.name, 'ring': self.name + '_ring'}
         for i, (k, lab) in enumerate(self.KINDS):
             on = tk.BooleanVar(value=self.S.get('on_' + k, defaults[k]))
             chk = ttk.Checkbutton(f, text=lab, variable=on)
@@ -1005,7 +1006,10 @@ class ExportDialog(tk.Toplevel):
                           'has both, with the right offset and deformity, plus the colour, normal and ocean parts. '
                           'Paste its nodes into your planet’s Body. The Scatterer config is the atmo.cfg for '
                           'Scatterer/Planets/<planet>/ in your mod, plus planetsList_<planet>.cfg, the entry that tells '
-                          'Scatterer to draw the planet.',
+                          'Scatterer to draw the planet. The emissive map is the lava glow; the Kopernicus config adds it '
+                          'as VertexColorMapEmissive (Lt_Duckweed’s 001_DuckweedUtils). The aurora is two textures (<name> and <name>_top) plus an EVE '
+                          'config (<name>.cfg) with the layers; its size is set on the Aurora tab. The ring texture is a '
+                          'strip with alpha; the Kopernicus config then also gets the Rings node.',
                   style='Dim.TLabel', wraplength=640, justify='left').grid(row=r + 2, column=0, columnspan=4, sticky='w', pady=(8, 0))
         self.stat = ttk.Label(f, text='', style='Dim.TLabel', wraplength=640, justify='left')
         self.stat.grid(row=r + 3, column=0, columnspan=4, sticky='w', pady=(10, 0))
@@ -1037,7 +1041,9 @@ class ExportDialog(tk.Toplevel):
 
     def update_rows(self):
         src = self.src()
-        has = {'preview': os.path.isfile(os.path.join(src, self.name + '_preview.png')), 'atmo': tr.has_atmo(self.P)}
+        has = {'preview': os.path.isfile(os.path.join(src, self.name + '_preview.png')), 'atmo': tr.has_atmo(self.P),
+               'aurora': tr.has_aurora(self.P), 'clouds': tr.has_clouds(self.P), 'emissive': os.path.isfile(os.path.join(src, self.name + '_emissive.png')),
+               'ring': tr.has_rings(self.P) and os.path.isfile(os.path.join(src, self.name + '_ring.png'))}
         for k, (on, chk, v_name, v_fmt, note) in self.rows.items():
             if has.get(k, True):
                 chk.state(['!disabled'])
@@ -1045,7 +1051,8 @@ class ExportDialog(tk.Toplevel):
             else:
                 on.set(False)
                 chk.state(['disabled'])
-                note.configure(text='no atmosphere' if k == 'atmo' else 'not in this build')
+                note.configure(text={'atmo': 'no atmosphere', 'aurora': 'no aurora', 'clouds': 'no clouds', 'emissive': 'nothing glows in this build',
+                                     'ring': 'no rings in this build' if tr.has_rings(self.P) else 'no rings'}.get(k, 'not in this build'))
         st = self.app.is_stale(self.res())
         self.stat.configure(text='Note: the settings changed after this build – the export shows the build, not the new settings.' if st else '')
 
@@ -1078,6 +1085,12 @@ class ExportDialog(tk.Toplevel):
         targets = [tr.export_target(folder, b, fm) for _, b, fm in jobs]
         if any(k == 'atmo' for k, _, _ in jobs):
             targets.append(tr.planets_file(folder, self.name))
+        for k, b, fm in jobs:
+            if k == 'aurora':
+                targets += list(tr.aurora_files(folder, b, fm))
+            if k == 'clouds':
+                cf = tr.cloud_files(folder, b, tr.cloud_entry(self.P.get('clouds')))
+                targets += [cf['cfg']] + [v for n, d in cf.items() if n != 'cfg' for v in d.values()]
         exist = [t for t in targets if os.path.exists(t)]
         if exist and not messagebox.askyesno('Replace files?', 'These files already exist and will be replaced:\n\n' + '\n'.join(os.path.basename(x) for x in exist), parent=self):
             return
@@ -1185,6 +1198,25 @@ class App(tk.Tk):
         self.atmo_err = None
         self.atmo_texc = {}
         self.atmo_src = None
+        self.ig_cache = {}
+        self.aur_lock = threading.Lock()
+        self.aur_q = queue.Queue()
+        self.aur_gen = 0
+        self.aur_req = None
+        self.aur_thread = None
+        self.aur_img = None
+        self.aur_key = None
+        self.aur_err = None
+        self.cl_lock = threading.Lock()
+        self.cl_q = queue.Queue()
+        self.cl_gen = 0
+        self.cl_req = None
+        self.cl_thread = None
+        self.cl_img = None
+        self.cl_key = None
+        self.cl_err = None
+        self.cl_prog = None
+        self.cl_dt = 0.0
         self.build_ui()
         self.after(150, self.live_poll)
         self.bind('<Control-z>', self.undo)
@@ -1243,19 +1275,21 @@ class App(tk.Tk):
         self.tab_relief()
         self.tab_landforms()
         self.tab_craters()
+        self.tab_lava()
         self.tab_features()
         self.tab_colours()
         self.tab_atmo()
+        self.tab_clouds()
+        self.tab_aurora()
+        self.tab_rings()
         self.tab_body()
         vb = ttk.Frame(right)
         vb.pack(fill='x')
         self.export_btn = ttk.Button(vb, text='Export…', command=self.export)
         self.export_btn.pack(side='right')
-        for val, txt in (('live', 'Live preview'), ('atmo', 'In game'), ('preview', 'Preview sheet'), ('flat', 'Flat map')):
+        for val, txt in (('live', 'Live preview'), ('atmo', 'In game'), ('clouds', 'Clouds'), ('aurora', 'Aurora'), ('preview', 'Sheet'), ('flat', 'Flat map')):
             ttk.Radiobutton(vb, text=txt, value=val, variable=self.view, style='Toolbutton',
-                            command=self.update_view).pack(side='left', padx=(0, 4))
-        self.live_lab = ttk.Label(vb, text='', style='Dim.TLabel')
-        self.live_lab.pack(side='left', padx=(8, 0))
+                            command=self.update_view).pack(side='left', padx=(0, 3))
         tb = ttk.Frame(right)
         tb.pack(fill='x', pady=(6, 0))
         ttk.Label(tb, text='Show', style='Dim.TLabel').pack(side='left', padx=(0, 4))
@@ -1279,8 +1313,12 @@ class App(tk.Tk):
         self.canvas.bind('<Motion>', self.hover)
         self.canvas.bind('<Leave>', lambda e: self.hover_lab.configure(text=''))
         self.canvas.bind('<Button-3>', self.feature_remove_click)
-        self.hover_lab = ttk.Label(right, text='', style='Dim.TLabel', font=(MONO, 9))
-        self.hover_lab.pack(fill='x')
+        hl = ttk.Frame(right)
+        hl.pack(fill='x')
+        self.live_lab = ttk.Label(hl, text='', style='Dim.TLabel')
+        self.live_lab.pack(side='right')
+        self.hover_lab = ttk.Label(hl, text='', style='Dim.TLabel', font=(MONO, 9))
+        self.hover_lab.pack(side='left', fill='x', expand=True)
         sb = ttk.Frame(right)
         sb.pack(fill='x', pady=(4, 0))
         ttk.Label(sb, text='Resolution', style='Dim.TLabel').pack(side='left')
@@ -1389,7 +1427,7 @@ class App(tk.Tk):
         sf = ScrollFrame(self.nb)
         self.nb.add(sf, text='Landforms')
         p = sf.inner
-        self.rand_bar(p, 'Randomize landforms', 'landforms', 'new plateaus, canyons, rivers, cracks and volcanoes')
+        self.rand_bar(p, 'Randomize landforms', 'landforms', 'new plateaus, canyons, ridges, rivers, cracks and volcanoes')
         self.section(p, 'Rivers and valleys')
         self.note(p, 'Water runs downhill from every bit of land, gathers into rivers and ends in the sea (or the lowest '
                      'basins on a dry world). Rivers cut a channel and a valley around it. The network is worked out '
@@ -1420,6 +1458,22 @@ class App(tk.Tk):
         Slider(self, g, 0, 'Canyons', ('relief', 'canyons'), 0, 1, 0.02, tip='0 = none, higher = more and longer canyons')
         Slider(self, g, 2, 'Depth (m)', ('relief', 'canyon_depth'), 0, 15000, 50)
         Slider(self, g, 3, 'Width (km)', ('relief', 'canyon_width'), 2, 800, 1)
+        self.section(p, 'Equatorial ridge')
+        self.note(p, 'One long mountain wall running around the planet, like the ridge on Iapetus or the ones that make '
+                     'Pan and Atlas look like walnuts. Craters still cut into it.')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Height (m)', ('ridge', 'height'), 0, 30000, 100, tip='0 = no ridge')
+        Slider(self, g, 2, 'Width (km)', ('ridge', 'width'), 1, 1500, 1, tip='at the foot of the main wall')
+        Slider(self, g, 4, 'Length (° around)', ('ridge', 'coverage'), 5, 360, 1, tip='360 = all the way around, less = an arc that fades out at both ends')
+        Slider(self, g, 6, 'Centre longitude (°)', ('ridge', 'lon'), 0, 360, 1, tip='middle of the arc, and the point the tilt turns around')
+        Slider(self, g, 8, 'Latitude shift (°)', ('ridge', 'lat'), -60, 60, 0.5, tip='moves the whole ridge north (+) or south (−)')
+        Slider(self, g, 10, 'Tilt (°)', ('ridge', 'tilt'), -60, 60, 0.5, tip='tilts the ridge against the equator')
+        Slider(self, g, 12, 'Gaps', ('ridge', 'segments'), 0, 1, 0.02, tip='0 = one unbroken wall, higher = broken into shorter pieces')
+        Slider(self, g, 14, 'Ragged', ('ridge', 'ragged'), 0, 1, 0.02, tip='how much the height, width and crest vary along the ridge')
+        Slider(self, g, 16, 'Wander', ('ridge', 'wander'), 0, 1, 0.02, tip='0 = a clean line, higher = weaves north and south')
+        r = ttk.Frame(p)
+        r.pack(fill='x', pady=(6, 0))
+        ttk.Button(r, text='New ridge shape', command=self.ridge_seed).pack(side='left', padx=8)
         self.section(p, 'Cracks')
         self.note(p, 'For icy moons and cracked crusts: long crossing lines like Europa’s, or a network of polygon cells. '
                      'Each crack is a groove, with raised edges if you like, and its own colour.')
@@ -1465,9 +1519,215 @@ class App(tk.Tk):
         cb.bind('<<ComboboxSelected>>', sel)
         self.combos.append((var, path, dict(options)))
 
+    def tab_rings(self):
+        sf = ScrollFrame(self.nb)
+        self.nb.add(sf, text='Rings')
+        self.rings_tab = sf
+        p = sf.inner
+        top = ttk.Frame(p)
+        top.pack(fill='x', pady=(2, 0))
+        self.ring_on = tk.BooleanVar(value=False)
+        ttk.Checkbutton(top, text='This planet has rings', variable=self.ring_on, command=self.ring_toggle).pack(side='left')
+        ttk.Button(top, text='Randomize rings', command=lambda: self.randomize('rings')).pack(side='right')
+        ttk.Button(top, text='New pattern', command=self.ring_new_pattern).pack(side='right', padx=6)
+        self.ring_cv = tk.Canvas(p, width=560, height=300, bg='#0d0f14', highlightthickness=1, highlightbackground=LINE)
+        self.ring_cv.pack(anchor='w', pady=(8, 4))
+        self.ring_strip = tk.Canvas(p, width=560, height=24, bg='#0d0f14', highlightthickness=1, highlightbackground=LINE)
+        self.ring_strip.pack(anchor='w')
+        lr = ttk.Frame(p)
+        lr.pack(fill='x')
+        ttk.Label(lr, text='inner edge', style='Dim.TLabel').pack(side='left')
+        ttk.Label(lr, text='outer edge', style='Dim.TLabel').pack(side='left', padx=(450, 0))
+        self.note(p, 'The picture uses the live preview’s colour map (turn on Live preview once to fill it).')
+        self.section(p, 'Size and tilt')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Inner edge (planet radii)', ('rings', 'inner'), 1.0, 6.0, 0.01)
+        Slider(self, g, 1, 'Outer edge (planet radii)', ('rings', 'outer'), 1.1, 10.0, 0.01)
+        Slider(self, g, 2, 'Tilt (°)', ('rings', 'angle'), 0, 90, 0.5, tip='against the equator; goes into the config as angle')
+        Slider(self, g, 4, 'View from (°)', ('rings', 'view'), 2, 80, 1, tip='only for this picture')
+        self.section(p, 'Structure')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Wide zones', ('rings', 'zones'), 1, 8, 1, isint=True)
+        Slider(self, g, 1, 'Ringlets', ('rings', 'ringlets'), 0, 1, 0.05)
+        Slider(self, g, 2, 'Ringlet detail', ('rings', 'detail'), 0.3, 3, 0.05)
+        Slider(self, g, 3, 'Opacity', ('rings', 'opacity'), 0, 1, 0.05)
+        Slider(self, g, 4, 'Soft edges', ('rings', 'edge'), 0, 1, 0.05)
+        Slider(self, g, 5, 'Colour variation', ('rings', 'variation'), 0, 1, 0.05)
+        self.section(p, 'Gaps')
+        ttk.Label(p, text='Position 0 = inner edge, 1 = outer edge. Width in the same units. Depth 1 = empty.',
+                  style='Dim.TLabel', wraplength=520).pack(anchor='w')
+        ge = ListEditor(self, p, lambda: self.P['rings']['gaps'],
+                        [num('Position', 0, 0, 1, 0.005, '%.3f', width=8), num('Width', 1, 0.001, 0.3, 0.001, '%.3f', width=8),
+                         num('Depth', 2, 0, 1, 0.05, '%.2f')],
+                        lambda: [round(random.uniform(0.2, 0.9), 3), 0.01, 1.0], add_text='Add gap')
+        ge.frame.pack(fill='x', pady=6)
+        self.gap_ed = ge
+        ttk.Button(ge.bar, text='Random gaps', command=self.ring_random_gaps).pack(side='left', padx=6)
+        self.section(p, 'Colours')
+        ttk.Label(p, text='Left on auto, the ring colours come from the planet’s colour stops.', style='Dim.TLabel').pack(anchor='w')
+        self.ring_cols = ttk.Frame(p)
+        self.ring_cols.pack(fill='x', pady=(4, 0))
+        self.section(p, 'Texture and Kopernicus config')
+        g = ttk.Frame(p)
+        g.pack(fill='x')
+        ttk.Label(g, text='Texture width').pack(side='left', padx=(8, 8))
+        self.ring_size = tk.StringVar(value='2048')
+        rc = ttk.Combobox(g, textvariable=self.ring_size, values=['1024', '2048', '4096'], width=6, state='readonly')
+        rc.pack(side='left')
+        rc.bind('<<ComboboxSelected>>', self.ring_size_changed)
+        ttk.Label(p, text='Build writes the ring texture with the other maps; Export saves it as DDS (BC3 / DXT5 with '
+                          'alpha, or BC7) or PNG and adds the Rings node to the Kopernicus config. The left end of the '
+                          'file is the outer edge of the ring, which is how Kopernicus maps it. Or paste this into the '
+                          'planet’s Body node:',
+                  style='Dim.TLabel', wraplength=520, justify='left').pack(anchor='w', pady=(6, 4))
+        self.ring_cfg = tk.Text(p, height=13, width=64, bg=FIELD, fg=FG, insertbackground=FG, relief='flat', font=(MONO, 9))
+        self.ring_cfg.pack(anchor='w')
+        ttk.Button(p, text='Copy config', command=self.ring_copy).pack(anchor='w', pady=(6, 0))
+        self.swatches.append(type('R', (), {'refresh': lambda s=None: self.ring_refresh()})())
+        self.nb.bind('<<NotebookTabChanged>>', lambda e: self.ring_schedule(), add='+')
+
+    def ring_visible(self):
+        try:
+            return self.nb.select() == str(self.rings_tab)
+        except (tk.TclError, AttributeError):
+            return False
+
+    def ring_schedule(self, delay=150):
+        if not self.ring_visible():
+            return
+        if getattr(self, 'ring_after', None):
+            self.after_cancel(self.ring_after)
+        self.ring_after = self.after(delay, self.ring_draw)
+
+    def ring_refresh(self):
+        r = self.P['rings']
+        self.ring_on.set(bool(r.get('enabled')))
+        self.ring_size.set(str(r.get('size', 2048)))
+        for w in self.ring_cols.winfo_children():
+            w.destroy()
+        for i, (k, lab) in enumerate((('inner_color', 'Inner'), ('middle_color', 'Middle'), ('outer_color', 'Outer'))):
+            ttk.Label(self.ring_cols, text=lab).grid(row=0, column=i * 2, sticky='w', padx=(8, 6))
+            self.ring_colour_pick(self.ring_cols, k).grid(row=0, column=i * 2 + 1, sticky='w', padx=(0, 18))
+        self.ring_text()
+        self.ring_schedule(10)
+
+    def ring_colour_pick(self, parent, k):
+        fr = ttk.Frame(parent)
+        r = self.P['rings']
+        auto = tr.ring_colours(self.P, tr.ring_entry(r))[('inner_color', 'middle_color', 'outer_color').index(k)]
+        auto = [int(round(float(v))) for v in auto]
+        lab = tk.Label(fr, bg=hexcol(r.get(k) or auto), width=6, relief='solid', bd=1, cursor='hand2')
+        lab.pack(side='left')
+
+        def pick(_e=None):
+            old = copy.deepcopy(r.get(k))
+
+            def live(v):
+                r[k] = v
+                lab.configure(bg=hexcol(v))
+                self.changed()
+
+            def restore():
+                r[k] = old
+            c = pick_colour(self, old or auto, live=live, restore=restore)
+            if c:
+                r[k] = c
+            self.ring_refresh()
+            self.changed()
+
+        def reset():
+            r[k] = None
+            self.ring_refresh()
+            self.changed()
+        lab.bind('<Button-1>', pick)
+        if r.get(k):
+            ttk.Button(fr, text='↺', width=2, style='Small.TButton', command=reset).pack(side='left', padx=(4, 0))
+        else:
+            ttk.Label(fr, text='auto', style='Dim.TLabel').pack(side='left', padx=(6, 0))
+        return fr
+
+    def ring_path(self):
+        S = load_settings()
+        cfg = (S.get('cfg_path') or tr.default_cfg_path(S.get('export_dir') or os.path.join(tr.TOOL, 'export'))).strip().replace('\\', '/').strip('/')
+        return (cfg + '/' if cfg else '') + self.P['name'] + '_ring'
+
+    def ring_text(self):
+        self.ring_cfg.configure(state='normal')
+        self.ring_cfg.delete('1.0', 'end')
+        self.ring_cfg.insert('1.0', tr.ring_snippet(self.P, self.ring_path()))
+        self.ring_cfg.configure(state='disabled')
+
+    def ring_copy(self):
+        self.clipboard_clear()
+        self.clipboard_append(tr.ring_snippet(self.P, self.ring_path()))
+        self.status('Ring config copied')
+
+    def ring_draw(self):
+        self.ring_after = None
+        try:
+            e = tr.ring_entry(self.P['rings'])
+            col, a = tr.ring_profile(self.P, 1024)
+            L = self.live_last
+            if L is not None:
+                tex = np.clip(L['col'].astype(np.float32) * tr.shade_map(L['gx'], L['gy'], float(self.P['normal_strength']))[..., None], 0, 255).astype(np.uint8)
+            else:
+                st = self.P['colors']['stops']
+                mid = st[len(st) // 2][1]
+                tex = np.broadcast_to(np.array(mid, np.uint8), (256, 512, 3))
+            img = tr.ring_scene(tex, col, a, e)
+            if not e['enabled']:
+                img = Image.blend(img, Image.new('RGB', img.size, (13, 15, 20)), 0.55)
+                d = ImageDraw.Draw(img)
+                d.text((12, 10), 'Rings are off – tick “This planet has rings”', fill=(220, 225, 235), font=sheet_font(15))
+            self.ring_img = ImageTk.PhotoImage(img)
+            self.ring_cv.delete('all')
+            self.ring_cv.create_image(0, 0, image=self.ring_img, anchor='nw')
+            stp = np.concatenate([col, (a * 255)[:, None]], 1)
+            ch = np.array([13, 15, 20], np.float32)
+            rgb = stp[:, :3] * (stp[:, 3:] / 255) + ch * (1 - stp[:, 3:] / 255)
+            strip = Image.fromarray(np.repeat(rgb[None], 24, 0).clip(0, 255).astype(np.uint8)).resize((560, 24), Image.LANCZOS)
+            self.ring_strip_img = ImageTk.PhotoImage(strip)
+            self.ring_strip.delete('all')
+            self.ring_strip.create_image(0, 0, image=self.ring_strip_img, anchor='nw')
+        except Exception as ex:
+            self.ring_cv.delete('all')
+            self.ring_cv.create_text(280, 150, text='Could not draw the rings: %s' % ex, fill=DIM)
+        self.ring_text()
+
+    def ring_toggle(self):
+        self.snapshot()
+        self.P['rings']['enabled'] = bool(self.ring_on.get())
+        self.changed()
+
+    def ring_size_changed(self, _e=None):
+        self.P['rings']['size'] = int(self.ring_size.get())
+        self.changed()
+
+    def ring_new_pattern(self):
+        self.snapshot()
+        self.P['rings']['pattern'] = int(self.P['rings'].get('pattern', 0)) + 1
+        self.changed()
+        self.ring_schedule(10)
+
+    def ring_random_gaps(self):
+        self.snapshot()
+        k = random.randint(1, 4)
+        gaps = [[round(random.uniform(0.35, 0.75), 3), round(random.uniform(0.02, 0.05), 3), round(random.uniform(0.85, 1.0), 2)]]
+        for _ in range(k - 1):
+            gaps.append([round(random.uniform(0.12, 0.96), 3), round(random.uniform(0.003, 0.012), 3), round(random.uniform(0.6, 1.0), 2)])
+        self.P['rings']['gaps'] = sorted(gaps)
+        self.gap_ed.rebuild()
+        self.changed()
+        self.ring_schedule(10)
+
     def crack_seed(self):
         self.snapshot()
         self.P['cracks']['seed'] = random.randint(1, 99999)
+        self.changed()
+
+    def ridge_seed(self):
+        self.snapshot()
+        self.P['ridge']['seed'] = random.randint(1, 99999)
         self.changed()
 
     def tab_craters(self):
@@ -1501,6 +1761,81 @@ class App(tk.Tk):
         r.pack(fill='x', pady=(6, 0))
         ttk.Label(r, text='Ejecta colour').pack(side='left', padx=(8, 10))
         OptSwatch(self, r, ('colors', 'ejecta_color'), [214, 210, 202], 'auto = a lighter version of the ground').frame.pack(side='left')
+
+    LAVA_MODE_NAMES = (('star', 'Star-facing side'), ('all', 'All over'))
+
+    def tab_lava(self):
+        sf = ScrollFrame(self.nb)
+        self.nb.add(sf, text='Lava')
+        p = sf.inner
+        A = ('lava',)
+        self.section(p, 'Lava plates')
+        self.note(p, 'Everything that glows ends up in one emissive map: the lava plates, a lava ocean, and glowing '
+                     'cracks and volcanoes further down.')
+        self.note(p, 'A crust torn into plates with glowing lava between them, like the worlds close to their star: '
+                     'the plates get smaller and the lava channels wider towards the hottest point, where the crust '
+                     'is melted into an open lava sea with floating rafts. “All over” tears the whole crust, for '
+                     'tidally heated moons. The glow is written as an emissive map.')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Amount', A + ('amount',), 0, 1, 0.01, tip='0 = no lava plates')
+        self.combo(g, 2, 'Where', A + ('mode',), list(self.LAVA_MODE_NAMES))
+        Slider(self, g, 3, 'Seed', A + ('seed',), 1, 999, 1, isint=True, tip='a new pattern of plates')
+        self.section(p, 'Hottest point')
+        self.note(p, 'For “Star-facing side”: the point that faces the star (map middle = longitude 180), and how far '
+                     'the torn crust reaches from it.')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Latitude (°)', A + ('lat',), -90, 90, 0.5)
+        Slider(self, g, 1, 'Longitude (°)', A + ('lon',), 0, 360, 0.5)
+        Slider(self, g, 2, 'Reach (°)', A + ('spread',), 5, 180, 1, tip='90 = the whole day side')
+        self.section(p, 'Plates')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Plate size (km)', A + ('plate_km',), 3, 800, 1, tip='at the edge of the torn area')
+        Slider(self, g, 2, 'Smaller towards the centre', A + ('shrink',), 0, 1, 0.01, tip='0 = all the same size, 1 = broken into many small pieces')
+        Slider(self, g, 4, 'Ragged edges', A + ('jagged',), 0, 1, 0.01)
+        Slider(self, g, 5, 'Tilt (m)', A + ('tilt',), 0, 8000, 50, tip='how far the plates are tipped and pushed up, ripped up look')
+        self.section(p, 'Lava channels')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Width (km)', A + ('crack_km',), 0.5, 60, 0.1, tip='at the edge of the torn area')
+        Slider(self, g, 2, 'Wider towards the centre', A + ('widen',), 0, 6, 0.05)
+        Slider(self, g, 3, 'Depth (m)', A + ('depth',), 0, 6000, 50, tip='how far the lava lies below the plates')
+        self.section(p, 'Lava sea and pools')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Lava sea (°)', A + ('core',), 0, 60, 0.5, tip='radius of the open lava at the hottest point, 0 = none')
+        Slider(self, g, 2, 'Lava sea depth (m)', A + ('core_depth',), 0, 6000, 50)
+        Slider(self, g, 3, 'Floating rafts', A + ('rafts',), 0, 1, 0.01, tip='bits of crust drifting on the open lava')
+        Slider(self, g, 5, 'Lava pools', A + ('pools',), 0, 40, 1, isint=True, tip='round lakes of lava, inside the torn area')
+        Slider(self, g, 7, 'Pool size (km)', A + ('pool_km',), 2, 600, 1)
+        self.section(p, 'Lava ocean')
+        self.note(p, 'Fills everything below sea level with lava instead of water, with floating crust and glowing '
+                     'shores. Needs “Ocean” on the Shape tab. The Kopernicus config writes the ocean in the lava '
+                     'colours, with the glow on the ocean surface too.')
+        r = ttk.Frame(p)
+        r.pack(fill='x')
+        self.check(r, 'Lava ocean', ('lava_ocean', 'enabled')).pack(side='left', padx=8)
+        g = self.grid_box(p)
+        O = ('lava_ocean',)
+        Slider(self, g, 0, 'Floating crust', O + ('crust',), 0, 1, 0.01, tip='0 = open lava, 1 = mostly crusted over')
+        Slider(self, g, 2, 'Crust plate size (km)', O + ('crust_km',), 2, 500, 1)
+        Slider(self, g, 3, 'Glowing shores', O + ('shore',), 0, 1, 0.01, tip='hot rock along the coast')
+        Slider(self, g, 5, 'Ocean glow', O + ('glow',), 0, 2, 0.01)
+        self.section(p, 'More glow')
+        self.note(p, 'Glowing lava in the cracks (Landforms tab), in the volcanoes (Relief and Features tabs) and in '
+                     'the rivers (Landforms tab), in the colour map and the emissive map.')
+        g = self.grid_box(p)
+        E = ('emission',)
+        Slider(self, g, 0, 'Glowing cracks', E + ('cracks',), 0, 2, 0.01, tip='0 = off')
+        Slider(self, g, 2, 'Glowing volcanoes', E + ('volcanoes',), 0, 2, 0.01, tip='lava in the calderas, 0 = off')
+        Slider(self, g, 4, 'Lava flows', E + ('flows',), 0, 1, 0.01, tip='glowing streams down the volcano slopes')
+        Slider(self, g, 6, 'Lava rivers', E + ('rivers',), 0, 2, 0.01,
+               tip='the rivers (Landforms tab) carry glowing lava instead of water, 0 = off')
+        self.section(p, 'Colours and glow')
+        self.note(p, 'Used by all the lava: plates, lava ocean, cracks and volcanoes.')
+        self.swatch_row(p, [('Lava', A + ('color',)), ('Hottest lava', A + ('hot_color',)), ('Crust', A + ('crust_color',))])
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Darker crust', A + ('crust_amount',), 0, 1, 0.01, tip='how much the plates take the crust colour')
+        Slider(self, g, 2, 'Heated plate edges', A + ('edge_glow',), 0, 1, 0.01, tip='a soft glow on the plates next to the lava')
+        Slider(self, g, 4, 'Plate glow', A + ('glow',), 0, 2, 0.01,
+               tip='brightness of the lava plates in the emissive map (VertexColorMapEmissive, Additive)')
 
     def tab_colours(self):
         sf = ScrollFrame(self.nb)
@@ -1633,6 +1968,15 @@ class App(tk.Tk):
             ttk.Radiobutton(vr, text=txt, value=val, variable=self.atmo_view, style='Toolbutton',
                             command=self.atmo_view_changed).pack(side='left', padx=(0, 4))
         ttk.Button(vr, text='In game view', command=self.atmo_show).pack(side='right')
+        vr2 = ttk.Frame(p)
+        vr2.pack(fill='x', pady=(6, 0))
+        ttk.Label(vr2, text='In game view also shows').pack(side='left', padx=(8, 8))
+        self.ig_clouds = tk.BooleanVar(value=True)
+        self.ig_aurora = tk.BooleanVar(value=True)
+        self.ig_glow = tk.BooleanVar(value=True)
+        self.ig_show_glow = True
+        for txt, var in (('Clouds', self.ig_clouds), ('Aurora', self.ig_aurora), ('Lava glow', self.ig_glow)):
+            ttk.Checkbutton(vr2, text=txt, variable=var, command=self.ingame_toggles).pack(side='left', padx=(0, 10))
         g = self.grid_box(p)
         Slider(self, g, 0, 'Sun angle (°)', A + ('sun_angle',), 0, 170, 1,
                tip='only for the picture: 0 = sun behind you, 90 = from the side, 150 = from behind the planet')
@@ -1961,6 +2305,10 @@ class App(tk.Tk):
         if self.atmo_e()['enabled'] and self.view.get() != 'atmo':
             self.atmo_show()
 
+    def ingame_toggles(self):
+        if self.view.get() == 'atmo':
+            self.update_view()
+
     def atmo_show(self):
         if self.place_mode.get():
             self.place_mode.set(False)
@@ -2129,8 +2477,58 @@ class App(tk.Tk):
         k = min(1.0, 1300.0 / w, 820.0 / h)
         return int(w * k), int(h * k)
 
+    def ingame_any(self):
+        P = self.P
+        return tr.has_atmo(P) or tr.has_clouds(P) or tr.has_aurora(P) or bool(getattr(self, 'ig_show_glow', None) and self.ig_glow_on() and self.ingame_em()[0] is not None)
+
+    def ig_glow_on(self):
+        return bool(self.ig_glow.get()) if hasattr(self, 'ig_glow') else True
+
+    def ingame_em(self):
+        if self.atmo_src == 'build':
+            f = os.path.join(self.out_path(), self.P['name'] + '_emissive.png')
+            if os.path.isfile(f):
+                return f, ('emb', f, os.path.getmtime(f))
+            return None, None
+        L = self.live_last
+        if L is not None and L.get('em') is not None:
+            return L['em'], ('eml', L['key'], L['W'])
+        return None, None
+
+    def ingame_extras(self, P, cancel):
+        cl = None
+        if tr.has_clouds(P) and (self.ig_clouds.get() if hasattr(self, 'ig_clouds') else True):
+            ck = json.dumps(['c', P['clouds']], sort_keys=True)
+            cl = self.ig_cache.get(ck)
+            if cl is None:
+                cl = tr.ingame_clouds(P, 1024, cancel=cancel, workers=tr.THREADS)
+                self.ig_cache = {k: v for k, v in self.ig_cache.items() if not k.startswith('["c"')}
+                self.ig_cache[ck] = cl
+        em_src, ekey = self.ingame_em() if self.ig_glow_on() else (None, None)
+        au = tr.has_aurora(P) and (self.ig_aurora.get() if hasattr(self, 'ig_aurora') else True)
+        gk = json.dumps(['g', P['aurora'] if au else None, str(ekey)], sort_keys=True)
+        gl = self.ig_cache.get(gk, False)
+        if gl is False:
+            em = None
+            if isinstance(em_src, str):
+                em = np.asarray(Image.open(em_src).convert('RGB'))
+            elif em_src is not None:
+                em = em_src
+            Q = P if au else dict(P, aurora=dict(P['aurora'], enabled=False))
+            gl = tr.ingame_glow(Q, em, 1024, cancel=cancel)
+            self.ig_cache = {k: v for k, v in self.ig_cache.items() if not k.startswith('["g"')}
+            self.ig_cache[gk] = gl
+        return cl, gl
+
+    def ingame_key(self):
+        P = self.P
+        sh = [bool(self.ig_clouds.get()) if hasattr(self, 'ig_clouds') else True,
+              bool(self.ig_aurora.get()) if hasattr(self, 'ig_aurora') else True, self.ig_glow_on()]
+        return [P.get('clouds') if tr.has_clouds(P) else None, P.get('aurora') if tr.has_aurora(P) else None,
+                str(self.ingame_em()[1]), sh]
+
     def atmo_request(self, quick_only=False):
-        if not tr.has_atmo(self.P):
+        if not self.ingame_any():
             return
         t = self.atmo_texture()
         if t is None:
@@ -2138,7 +2536,7 @@ class App(tk.Tk):
         tex, gx, gy, tkey = t
         w, h = self.atmo_size()
         P = tr.normalize(copy.deepcopy(self.P))
-        key = json.dumps([P['atmosphere'], P['radius'], P['normal_strength'], P['preview'], self.rot, w, h, str(tkey)],
+        key = json.dumps([P['atmosphere'], P['radius'], P['normal_strength'], P['preview'], self.rot, w, h, str(tkey), self.ingame_key()],
                          sort_keys=True, default=str)
         if self.atmo_key == key and not quick_only:
             return
@@ -2168,10 +2566,11 @@ class App(tk.Tk):
                     raise tr.Cancelled()
             try:
                 passes = ((3, 6),) if quick_only else ((3, 6), (1, 14))
+                cl, gl = self.ingame_extras(P, cancel)
                 for sc, steps in passes:
                     t0 = time.time()
-                    im = tr.render_atmo(P, tex, gx, gy, w=max(60, w // sc), h=max(40, h // sc), steps=steps, rot=rot,
-                                        cancel=cancel, bg=(13, 15, 20))
+                    im = tr.render_ingame(P, tex, gx, gy, w=max(60, w // sc), h=max(40, h // sc), steps=steps, rot=rot,
+                                          cancel=cancel, bg=(13, 15, 20), clouds=cl, glow=gl)
                     if sc > 1:
                         im = im.resize((w, h), Image.BILINEAR)
                     self.atmo_q.put((gen, key, im, sc == 1, time.time() - t0, None))
@@ -2212,7 +2611,7 @@ class App(tk.Tk):
         self.redraw()
 
     def atmo_drag_start(self, e):
-        if self.view.get() != 'atmo' or not tr.has_atmo(self.P):
+        if self.view.get() != 'atmo' or not self.ingame_any():
             return False
         self.snapshot()
         self.adrag = (e.x, float(self.atmo_e()['sun_angle']), False)
@@ -2237,6 +2636,484 @@ class App(tk.Tk):
             self.changed()
         else:
             self.drop_snapshot()
+
+    AURORA_SIZE_NAMES = (('1024', '1024 × 512'), ('2048', '2048 × 1024'), ('4096', '4096 × 2048'), ('8192', '8192 × 4096'))
+
+    def tab_aurora(self):
+        sf = ScrollFrame(self.nb)
+        self.nb.add(sf, text='Aurora')
+        p = sf.inner
+        A = ('aurora',)
+        top = ttk.Frame(p)
+        top.pack(fill='x', pady=(2, 0))
+        self.aur_on = tk.BooleanVar(value=False)
+        ttk.Checkbutton(top, text='Aurora (EVE cloud layers)', variable=self.aur_on, command=self.aurora_toggle).pack(side='left')
+        ttk.Button(top, text='Aurora view', command=self.aurora_show).pack(side='right')
+        self.note(p, 'Polar lights around the magnetic poles, made of glowing curtains with rays. Export writes two '
+                     'textures (the lower, main colour and the top fringe) and an EVE config that stacks them as '
+                     'several thin layers, so the aurora has height and depth. Needs EVE and StockVolumetricClouds. '
+                     'The Aurora view shows both poles seen from above.')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Seed', A + ('seed',), 1, 999, 1, isint=True, tip='a different pattern of curtains with the same settings')
+        self.section(p, 'Where')
+        r = ttk.Frame(p)
+        r.pack(fill='x')
+        self.check(r, 'North pole', A + ('north',)).pack(side='left', padx=(8, 16))
+        self.check(r, 'South pole', A + ('south',)).pack(side='left')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'North magnetic tilt (°)', A + ('north_tilt',), 0, 40, 0.5,
+               tip='how far the magnetic pole sits from the north pole')
+        Slider(self, g, 2, 'North tilt towards (lon °)', A + ('north_lon',), 0, 360, 1)
+        Slider(self, g, 3, 'South magnetic tilt (°)', A + ('south_tilt',), 0, 40, 0.5)
+        Slider(self, g, 4, 'South tilt towards (lon °)', A + ('south_lon',), 0, 360, 1)
+        Slider(self, g, 5, 'Oval size (°)', A + ('oval',), 3, 45, 0.5,
+               tip='distance of the main curtain from the magnetic pole (Earth: about 20°)')
+        Slider(self, g, 7, 'Wobble (°)', A + ('wobble',), 0, 15, 0.1, tip='how far the oval bends in and out')
+        Slider(self, g, 9, 'Dark centre (°)', A + ('polar_gap',), 0, 30, 0.5,
+               tip='0 = off; keeps the area right around the magnetic pole free of glow')
+        self.section(p, 'Curtains')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Curtains', A + ('curtains',), 1, len(tr.AURORA_CURTAINS), 1, isint=True,
+               tip='parallel arcs, the first is the brightest')
+        Slider(self, g, 2, 'Spacing', A + ('spread',), 0.2, 3, 0.05, tip='how far apart the curtains are')
+        Slider(self, g, 4, 'Width (°)', A + ('width',), 0.3, 6, 0.05)
+        Slider(self, g, 5, 'Gaps', A + ('patchy',), 0, 1, 0.01, tip='0 = unbroken arcs, 1 = short broken pieces')
+        Slider(self, g, 7, 'Rays', A + ('rays',), 0, 1, 0.01, tip='the vertical streaks in the curtains')
+        Slider(self, g, 9, 'Diffuse glow', A + ('glow',), 0, 0.6, 0.01, tip='a soft haze along the oval')
+        Slider(self, g, 11, 'Brightness', A + ('brightness',), 0.1, 1, 0.01)
+        self.section(p, 'Colours')
+        self.note(p, 'Main = the curtain, edge = its lower fringe, core = the brightest parts. The top layers are '
+                     'the high part of the aurora (red and purple on Earth).')
+        self.swatch_row(p, [('Main', A + ('color',)), ('Edge', A + ('edge_color',)), ('Core', A + ('core_color',))])
+        self.swatch_row(p, [('Top', A + ('top_color',)), ('Top edge', A + ('top_edge_color',)), ('Top core', A + ('top_core_color',))])
+        self.section(p, 'In game')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Layers', A + ('layers',), 1, 16, 1, isint=True, tip='more layers = more depth from the side')
+        Slider(self, g, 2, 'Top layers', A + ('top_layers',), 0, 16, 1, isint=True, tip='how many of the highest layers use the top colours')
+        Slider(self, g, 4, 'Lowest layer (m)', A + ('altitude',), 1000, 200000, 500)
+        Slider(self, g, 5, 'Layer spacing (m)', A + ('spacing',), 0, 20000, 100)
+        Slider(self, g, 6, 'Opacity', A + ('opacity',), 0, 255, 1, isint=True, tip='alpha of the lowest layer (_Color)')
+        Slider(self, g, 8, 'Highest layer opacity', A + ('fade',), 0, 1, 0.01, tip='as a part of the lowest layer’s opacity')
+        Slider(self, g, 10, 'Drift speed', A + ('speed',), -60, 60, 0.5, tip='EVE speed, how fast the aurora drifts around the pole')
+        self.combo(g, 12, 'Texture size', A + ('size',), [(int(k), n) for k, n in self.AURORA_SIZE_NAMES])
+        self.section(p, 'EVE config')
+        self.note(p, 'Goes into a .cfg anywhere in your mod (for example Configs/…/Clouds/). Export writes it with the '
+                     'right texture paths; the paths here use “Path in config” from the last export.')
+        self.aur_cfg = tk.Text(p, height=14, width=64, bg=FIELD, fg=FG, insertbackground=FG, relief='flat', font=(MONO, 9), tabs=('0.9c',))
+        self.aur_cfg.pack(anchor='w', pady=(4, 0))
+        ttk.Button(p, text='Copy', command=self.aurora_copy).pack(anchor='w', pady=(6, 12))
+        self.swatches.append(type('A', (), {'refresh': lambda s=None: self.aurora_refresh()})())
+
+    def aurora_e(self):
+        return self.P['aurora']
+
+    def aurora_refresh(self):
+        self.aur_on.set(bool(self.aurora_e().get('enabled')))
+        self.aurora_text()
+
+    def aurora_tex_names(self):
+        S = load_settings()
+        n = self.P['name']
+        base = S.get('cfg_path') or tr.default_cfg_path(S.get('export_dir') or '')
+        return tr.tex_path('', n + '_aurora', base), tr.tex_path('', n + '_aurora_top', base)
+
+    def aurora_cfg_text(self):
+        lo, hi = self.aurora_tex_names()
+        return tr.aurora_cfg(self.P, self.P['name'], lo, hi)
+
+    def aurora_text(self):
+        self.aur_text_after = None
+        if not hasattr(self, 'aur_cfg'):
+            return
+        self.aur_cfg.configure(state='normal')
+        self.aur_cfg.delete('1.0', 'end')
+        self.aur_cfg.insert('1.0', self.aurora_cfg_text())
+        self.aur_cfg.configure(state='disabled')
+
+    def aurora_dirty(self):
+        if getattr(self, 'aur_text_after', None):
+            self.after_cancel(self.aur_text_after)
+        self.aur_text_after = self.after(300, self.aurora_text)
+
+    def aurora_copy(self):
+        self.clipboard_clear()
+        self.clipboard_append(self.aurora_cfg_text())
+        self.status('EVE aurora config copied')
+
+    def aurora_toggle(self):
+        self.snapshot()
+        self.aurora_e()['enabled'] = bool(self.aur_on.get())
+        self.changed()
+        if self.aurora_e()['enabled'] and self.view.get() != 'aurora':
+            self.aurora_show()
+
+    def aurora_show(self):
+        if hasattr(self, 'place_mode') and self.place_mode.get():
+            self.place_mode.set(False)
+        self.view.set('aurora')
+        self.update_view()
+
+    def aurora_size(self):
+        cw, ch = max(10, self.canvas.winfo_width()), max(10, self.canvas.winfo_height())
+        return int(max(160, min(700, (cw - 40) / 2, ch - 20)))
+
+    def aurora_request(self):
+        if not tr.has_aurora(self.P):
+            return
+        S = self.aurora_size()
+        P = tr.normalize(copy.deepcopy(self.P))
+        bg, bkey = self.aurora_bg()
+        key = json.dumps([P['aurora'], S, str(bkey)], sort_keys=True, default=str)
+        if self.aur_key == key:
+            return
+        r = self.aur_req
+        if r is not None and r[1] == key:
+            return
+        self.aur_err = None
+        with self.aur_lock:
+            self.aur_gen += 1
+            self.aur_req = (self.aur_gen, key, P, bg, S)
+            if self.aur_thread is None:
+                self.aur_thread = threading.Thread(target=self.aurora_worker, daemon=True)
+                self.aur_thread.start()
+
+    def aurora_worker(self):
+        while True:
+            with self.aur_lock:
+                req = self.aur_req
+                if req is None:
+                    self.aur_thread = None
+                    return
+            gen, key, P, bg, S = req
+
+            def cancel(gen=gen):
+                r = self.aur_req
+                if r is None or r[0] != gen:
+                    raise tr.Cancelled()
+            try:
+                for W in (512, 1024 if S < 520 else 2048):
+                    t0 = time.time()
+                    low, top = tr.aurora_maps(P, W, cancel=cancel)
+                    im = tr.aurora_preview(P, low, top, bg, S)
+                    self.aur_q.put((gen, key, im, W >= 1024, time.time() - t0, None))
+            except tr.Cancelled:
+                continue
+            except Exception as ex:
+                self.aur_q.put((gen, key, None, True, 0, str(ex)))
+            with self.aur_lock:
+                if self.aur_req is not None and self.aur_req[0] == gen:
+                    self.aur_req = None
+
+    def aurora_poll(self):
+        got = False
+        try:
+            while True:
+                gen, key, im, final, dt, err = self.aur_q.get_nowait()
+                if gen != self.aur_gen:
+                    continue
+                if err:
+                    self.aur_err = err
+                else:
+                    self.aur_img = im
+                    self.aur_err = None
+                    if final:
+                        self.aur_key = key
+                got = True
+        except queue.Empty:
+            pass
+        if got and self.view.get() == 'aurora':
+            if self.aur_err:
+                self.view_src = None
+                self.status('Could not draw the aurora: %s' % self.aur_err[:120])
+            else:
+                self.view_src = self.aur_img
+            self.redraw()
+
+    def aurora_view(self):
+        if not tr.has_aurora(self.P):
+            self.view_src = None
+            if not self.proc:
+                self.status('No aurora yet – tick “Aurora” on the Aurora tab')
+        else:
+            self.aurora_request()
+            self.view_src = self.aur_img
+            if not self.proc:
+                self.status('Aurora: north pole (left) and south pole (right) seen from above, all layers together')
+        self.update_export_state()
+        self.redraw()
+
+    CLOUD_SIZE_NAMES = ((2048, '2048 × 1024'), (4096, '4096 × 2048'), (8192, '8192 × 4096'), (16384, '16384 × 8192'))
+
+    def tab_clouds(self):
+        sf = ScrollFrame(self.nb)
+        self.nb.add(sf, text='Clouds')
+        p = sf.inner
+        A = ('clouds',)
+        top = ttk.Frame(p)
+        top.pack(fill='x', pady=(2, 0))
+        self.cl_on = tk.BooleanVar(value=False)
+        ttk.Checkbutton(top, text='Volumetric clouds (EVE + True Volumetric Clouds)', variable=self.cl_on, command=self.clouds_toggle).pack(side='left')
+        ttk.Button(top, text='Clouds view', command=self.clouds_show).pack(side='right')
+        self.rand_bar(p, 'Randomize clouds', 'clouds', 'new wind, swirls, layers and cloud cover')
+        self.note(p, 'Swirled, streaky clouds made the same way as Edmunds’: the wind carries the clouds around eddies '
+                     'and along bands, so they come out in curls, long streaks and thin fibres. A fair-weather layer is '
+                     'always there, weather systems build up and fade away again over the hours, and a high cirrus layer '
+                     'sits on top. Export writes the coverage and cloud type maps, the maps for scaled space and the '
+                     'EVE config. Needs EVE, True Volumetric Clouds and StockVolumetricClouds.')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Seed', A + ('seed',), 1, 999, 1, isint=True, tip='a new pattern of clouds')
+        self.combo(g, 2, 'Map size', A + ('size',), list(self.CLOUD_SIZE_NAMES))
+        self.section(p, 'Wind and swirls')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Swirls', A + ('swirl',), 0, 3, 0.01, tip='how strongly eddies curl the clouds up')
+        Slider(self, g, 2, 'Swirl size', A + ('swirl_size',), 0.25, 4, 0.05, tip='bigger = fewer, larger eddies')
+        Slider(self, g, 4, 'Wind', A + ('wind',), 0, 3, 0.01, tip='east-west winds that stretch the clouds into long bands')
+        Slider(self, g, 6, 'Wind bands', A + ('bands',), 1, 8, 1, isint=True, tip='3 = like Earth: trade winds, westerlies, polar winds')
+        Slider(self, g, 8, 'Streaks', A + ('streaks',), 0, 1, 0.01, tip='thin fibres along the wind')
+        Slider(self, g, 10, 'Broken up', A + ('breakup',), 0, 1, 0.01, tip='holes and gaps inside the cloud fields')
+        self.section(p, 'Fair weather')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Cover (% of the planet)', A + ('fair_pct',), 0, 100, 1, tip='the fair-weather clouds cover this much of the planet, 0 = no fair-weather layer')
+        Slider(self, g, 2, 'Small cumulus', A + ('speckle',), 0, 1, 0.01, tip='fields of little puffy clouds around the big ones')
+        self.section(p, 'Weather systems')
+        self.note(p, 'Big cloud masses that come and go. Each one fades in, stays for a while and fades out again; '
+                     'they take turns, spread evenly over the cycle.')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Systems', A + ('systems',), 0, 4, 1, isint=True, tip='0 = none')
+        Slider(self, g, 2, 'Cover (% of the planet)', A + ('system_pct',), 0, 100, 1, tip='how much of the planet each system covers, 0 = no weather systems')
+        Slider(self, g, 6, 'Lasts (hours)', A + ('duration',), 0.5, 100, 0.5)
+        Slider(self, g, 7, 'Comes back every (hours)', A + ('repeat',), 1, 200, 0.5)
+        Slider(self, g, 8, 'Fade in and out (hours)', A + ('fade',), 0, 50, 0.5)
+        r = ttk.Frame(p)
+        r.pack(fill='x', pady=(4, 0))
+        self.cl_meas = ttk.Label(p, text='', style='Dim.TLabel', wraplength=540, justify='left')
+        self.cl_meas.pack(anchor='w', padx=8, pady=(6, 0))
+        self.cl_sys = tk.BooleanVar(value=True)
+        ttk.Checkbutton(r, text='Show a weather system in the Clouds view (as at one moment in game)', variable=self.cl_sys,
+                        command=self.clouds_request).pack(side='left', padx=8)
+        self.section(p, 'Cirrus')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Cover (% of the planet)', A + ('cirrus_pct',), 0, 100, 1, tip='thin, high, hair-like clouds, 0 = none')
+        Slider(self, g, 2, 'Cirrus height (m)', A + ('cirrus_altitude',), 1000, 60000, 100)
+        self.section(p, 'In game')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Cloud base (m)', A + ('base',), 0, 40000, 100)
+        Slider(self, g, 1, 'Cloud height', A + ('height',), 0.2, 4, 0.05, tip='1 = as tall as Edmunds’ clouds (up to about 5.7 km above the base)')
+        Slider(self, g, 3, 'Drift speed', A + ('speed',), -200, 200, 0.5, tip='EVE speed')
+        Slider(self, g, 5, 'Brightness from orbit', A + ('brightness',), 50, 1500, 1, isint=True, tip='_Color of the scaled-space layer, Edmunds uses 512')
+        self.swatch_row(p, [('Cloud colour', A + ('color',))])
+        self.section(p, 'EVE config')
+        self.note(p, 'Export writes it with the texture paths. The paths here use “Path in config” from the last export.')
+        self.cl_cfg = tk.Text(p, height=12, width=64, bg=FIELD, fg=FG, insertbackground=FG, relief='flat', font=(MONO, 9), tabs=('0.9c',))
+        self.cl_cfg.pack(anchor='w', pady=(4, 0))
+        ttk.Button(p, text='Copy', command=self.clouds_copy).pack(anchor='w', pady=(6, 12))
+        self.swatches.append(type('C', (), {'refresh': lambda s=None: self.clouds_refresh()})())
+
+    def clouds_refresh(self):
+        self.cl_on.set(bool(self.P['clouds'].get('enabled')))
+        self.clouds_text()
+
+    def clouds_cfg_text(self):
+        S = load_settings()
+        base = S.get('cfg_path') or tr.default_cfg_path(S.get('export_dir') or '')
+        return tr.cloud_cfg(self.P, self.P['name'], tr.tex_path('', self.P['name'], base))
+
+    def clouds_text(self):
+        self.cl_text_after = None
+        if not hasattr(self, 'cl_cfg'):
+            return
+        self.cl_cfg.configure(state='normal')
+        self.cl_cfg.delete('1.0', 'end')
+        self.cl_cfg.insert('1.0', self.clouds_cfg_text())
+        self.cl_cfg.configure(state='disabled')
+
+    def clouds_dirty(self):
+        if getattr(self, 'cl_text_after', None):
+            self.after_cancel(self.cl_text_after)
+        self.cl_text_after = self.after(400, self.clouds_text)
+
+    def clouds_copy(self):
+        self.clipboard_clear()
+        self.clipboard_append(self.clouds_cfg_text())
+        self.status('EVE cloud config copied')
+
+    def clouds_toggle(self):
+        self.snapshot()
+        self.P['clouds']['enabled'] = bool(self.cl_on.get())
+        self.changed()
+        if self.P['clouds']['enabled'] and self.view.get() != 'clouds':
+            self.clouds_show()
+
+    def clouds_show(self):
+        if hasattr(self, 'place_mode') and self.place_mode.get():
+            self.place_mode.set(False)
+        self.view.set('clouds')
+        self.update_view()
+
+    def clouds_request(self):
+        if not tr.has_clouds(self.P):
+            return
+        P = tr.normalize(copy.deepcopy(self.P))
+        bg, bkey = self.aurora_bg()
+        sysv = bool(self.cl_sys.get()) if hasattr(self, 'cl_sys') else True
+        key = json.dumps([P['clouds'], sysv, str(bkey)], sort_keys=True, default=str)
+        if self.cl_key == key:
+            return
+        r = self.cl_req
+        if r is not None and r[1] == key:
+            return
+        self.cl_err = None
+        self.cl_prog = ('clouds', 0.0)
+        with self.cl_lock:
+            self.cl_gen += 1
+            self.cl_req = (self.cl_gen, key, P, bg, sysv)
+            if self.cl_thread is None:
+                self.cl_thread = threading.Thread(target=self.clouds_worker, daemon=True)
+                self.cl_thread.start()
+
+    def clouds_image(self, P, cov, bg, sysv):
+        W = 1024
+        if bg is None:
+            base = np.zeros((W // 2, W, 3), np.uint8) + np.array([40, 60, 90], np.uint8)
+        else:
+            base = np.asarray(Image.fromarray(np.asarray(bg, np.uint8)).resize((W, W // 2), Image.BILINEAR))
+        show = {k: v for k, v in cov.items() if not k.startswith('sys') or (sysv and k == 'sys0')}
+        comp = tr.cloud_composite(P, show, (base.astype(np.float32) * 0.75).astype(np.uint8))
+        z = np.zeros(comp.shape[:2], np.float32)
+        pv = P['preview']
+        sheet = Image.new('RGB', (1024 + 512 + 24, 512), (13, 15, 20))
+        sheet.paste(tr.render_globe(comp, z, z, 512, float(pv['tilt']), float(pv['view_lat']) + self.rot[1],
+                                     float(pv['view_lon']) + self.rot[0], 0.0), (0, 0))
+        sheet.paste(Image.fromarray(comp), (512 + 24, 0))
+        return sheet
+
+    def clouds_worker(self):
+        while True:
+            with self.cl_lock:
+                req = self.cl_req
+                if req is None:
+                    self.cl_thread = None
+                    return
+            gen, key, P, bg, sysv = req
+
+            def cancel(gen=gen):
+                r = self.cl_req
+                if r is None or r[0] != gen:
+                    raise tr.Cancelled()
+            try:
+                t0 = time.time()
+                for W in (512, 1024):
+                    def prog(stage, f, W=W, gen=gen):
+                        self.cl_q.put((gen, key, None, -1, ('wind' if stage == 'wind' else 'clouds %d px' % W, f)))
+                    cov, typ = tr.cloud_maps(P, W, cancel=cancel, progress=prog, workers=tr.THREADS)
+                    im = self.clouds_image(P, cov, bg, sysv)
+                    im.meas = {k: tr.cloud_cover_frac(v.astype(np.float32) / 255) for k, v in cov.items()}
+                    im.meas['total'] = tr.cloud_total(cov)
+                    self.cl_q.put((gen, key if W == 1024 else None, im, time.time() - t0, None))
+            except tr.Cancelled:
+                continue
+            except Exception as ex:
+                self.cl_q.put((gen, key, None, 0, str(ex)))
+            with self.cl_lock:
+                if self.cl_req is not None and self.cl_req[0] == gen:
+                    self.cl_req = None
+
+    def clouds_poll(self):
+        got = False
+        try:
+            while True:
+                gen, key, im, dt, err = self.cl_q.get_nowait()
+                if gen != self.cl_gen:
+                    continue
+                if dt == -1:
+                    self.cl_prog = err
+                    if self.view.get() == 'clouds':
+                        self.clouds_label()
+                        if self.view_src is None:
+                            self.redraw()
+                    continue
+                if err:
+                    self.cl_err = err
+                    self.cl_prog = None
+                else:
+                    self.cl_img = im
+                    self.cl_err = None
+                    self.clouds_meas(getattr(im, 'meas', None))
+                    if key is not None:
+                        self.cl_key = key
+                        self.cl_prog = None
+                        self.cl_dt = dt
+                got = True
+        except queue.Empty:
+            pass
+        if got and self.view.get() == 'clouds':
+            if self.cl_err:
+                self.view_src = None
+                self.status('Could not draw the clouds: %s' % self.cl_err[:120])
+            else:
+                self.view_src = self.cl_img
+            self.clouds_label()
+            self.redraw()
+
+    def clouds_meas(self, m):
+        if not m or not hasattr(self, 'cl_meas'):
+            return
+        sy = [v for k, v in m.items() if k.startswith('sys')]
+        parts = []
+        if 'fair' in m:
+            parts.append('fair weather %d %%' % round(m['fair'] * 100))
+        if sy:
+            parts.append('weather systems %d %% each' % round(sum(sy) / len(sy) * 100))
+        if 'cirrus' in m:
+            parts.append('cirrus %d %%' % round(m['cirrus'] * 100))
+        txt = 'Cover now: ' + (' · '.join(parts) if parts else 'no clouds')
+        if parts:
+            txt += '\nAll together (with one weather system): %d %% of the planet has clouds' % round(m.get('total', 0) * 100)
+        self.cl_meas.configure(text=txt)
+
+    def clouds_label(self):
+        p = getattr(self, 'cl_prog', None)
+        if not tr.has_clouds(self.P):
+            txt = ''
+        elif self.cl_err:
+            txt = 'clouds failed'
+        elif p is not None:
+            stage, f = p
+            txt = ('working out the wind… %d%%' if stage == 'wind' else 'making the clouds… %d%%') % int(f * 100)
+            if self.cl_img is not None:
+                txt = 'updating · ' + txt
+        elif self.cl_req is not None:
+            txt = 'updating…'
+        else:
+            txt = 'clouds 1024 px · %.1f s' % getattr(self, 'cl_dt', 0)
+        self.live_lab.configure(text=txt)
+        if not self.proc and self.view.get() == 'clouds':
+            if p is not None and p[0] == 'wind':
+                self.status('Clouds: working out the wind (%d%%), only when the seed or the wind settings change' % int(p[1] * 100))
+            elif p is not None:
+                self.status('Clouds: drawing the cloud layers (%d%%)' % int(p[1] * 100))
+            elif not self.cl_err and self.cl_img is not None:
+                self.status('Clouds over the planet' + (' with one weather system' if self.cl_sys.get() else ', fair weather and cirrus only'))
+
+    def clouds_view(self):
+        if not tr.has_clouds(self.P):
+            self.view_src = None
+            if not self.proc:
+                self.status('No clouds yet – tick “Volumetric clouds” on the Clouds tab')
+        else:
+            self.clouds_request()
+            self.view_src = self.cl_img
+            if not self.proc and self.cl_img is None:
+                self.status('Clouds: starting…')
+        self.clouds_label()
+        self.update_export_state()
+        self.redraw()
+
+    def aurora_bg(self):
+        L = self.live_last
+        if L is None:
+            return None, None
+        return L['col'], (L['key'], L['W'])
 
     def tab_body(self):
         sf = ScrollFrame(self.nb)
@@ -2389,6 +3266,17 @@ class App(tk.Tk):
             CK['depth'] = round(R(100, 600) / 10) * 10
             CK['ridges'] = round(R(0.0, 0.8), 2)
             CK['cell_size'] = round(max(10.0, Rk * R(0.3, 1.0)) / 5) * 5
+            RG = P['ridge']
+            RG['seed'] = random.randint(1, 99999)
+            RG['height'] = 0.0 if P['shape']['ocean'] or random.random() < 0.85 else round(min(25000.0, Rk * R(0.01, 0.03) * 1000) / 100) * 100
+            RG['width'] = float(round(max(2.0, Rk * R(0.03, 0.08))))
+            RG['coverage'] = random.choice([360.0, 360.0, float(round(R(120, 300)))])
+            RG['lon'] = float(random.randint(0, 359))
+            RG['lat'] = 0.0
+            RG['tilt'] = random.choice([0.0, 0.0, round(R(-8, 8), 1)])
+            RG['segments'] = random.choice([0.0, round(R(0.1, 0.6), 2)])
+            RG['ragged'] = round(R(0.3, 0.8), 2)
+            RG['wander'] = round(R(0.1, 0.5), 2)
             V = P['volcanoes']
             V['seed'] = random.randint(1, 99999)
             V['count'] = random.choice([0, 0, 1, 2, 3, 5])
@@ -2409,6 +3297,20 @@ class App(tk.Tk):
             C['fresh'] = round(R(0.1, 0.7), 2)
             C['ejecta'] = round(R(0.2, 0.8), 2)
             C['rays'] = round(R(0.2, 0.8), 2)
+        if what in ('clouds', 'all'):
+            K = P['clouds']
+            K['seed'] = random.randint(1, 999)
+            K['swirl'] = round(R(0.5, 1.7), 2)
+            K['swirl_size'] = round(R(0.6, 1.9), 2)
+            K['wind'] = round(R(0.3, 1.8), 2)
+            K['bands'] = random.choice([2, 3, 3, 3, 4, 5])
+            K['streaks'] = round(R(0.35, 0.95), 2)
+            K['breakup'] = round(R(0.2, 0.8), 2)
+            K['fair_pct'] = float(round(R(15, 60)))
+            K['speckle'] = round(R(0.1, 0.8), 2)
+            K['systems'] = random.choice([0, 1, 2, 3, 3, 4])
+            K['system_pct'] = float(round(R(20, 50)))
+            K['cirrus_pct'] = random.choice([0.0, float(round(R(8, 35))), float(round(R(8, 35)))])
         if what in ('colours', 'all'):
             self.palette()
             C = P['colors']
@@ -2422,6 +3324,16 @@ class App(tk.Tk):
             fl = [s_[1] for s_ in C['stops']]
             C['crater_floor'] = [int(max(0, min(255, v * R(0.55, 0.8)))) for v in fl[min(1, len(fl) - 1)]]
             C['dry']['color'] = [int(R(160, 200)), int(R(130, 165)), int(R(85, 120))]
+        if what == 'rings':
+            r = P['rings']
+            r.update({'zones': random.randint(2, 6), 'ringlets': round(R(0.3, 0.9), 2), 'detail': round(R(0.6, 1.8), 2),
+                      'opacity': round(R(0.6, 0.95), 2), 'edge': round(R(0.1, 0.6), 2), 'variation': round(R(0.2, 0.6), 2),
+                      'pattern': random.randint(0, 9999)})
+            k = random.randint(1, 3)
+            gaps = [[round(R(0.35, 0.75), 3), round(R(0.02, 0.05), 3), round(R(0.85, 1.0), 2)]]
+            for _ in range(k - 1):
+                gaps.append([round(R(0.12, 0.96), 3), round(R(0.003, 0.012), 3), round(R(0.6, 1.0), 2)])
+            r['gaps'] = sorted(gaps)
         self.refresh_all()
         self.changed(snap=False)
         msg = 'Randomized %s – Undo goes back' % ('everything' if what == 'all' else what)
@@ -2573,7 +3485,13 @@ class App(tk.Tk):
         self.update_res_info()
         if hasattr(self, 'atmo_cfg'):
             self.atmo_dirty()
-        if self.view.get() in ('live', 'atmo'):
+        if hasattr(self, 'aur_cfg'):
+            self.aurora_dirty()
+        if hasattr(self, 'cl_cfg'):
+            self.clouds_dirty()
+        if hasattr(self, 'ring_cv'):
+            self.ring_schedule()
+        if self.view.get() in ('live', 'atmo', 'aurora', 'clouds'):
             if self.pending:
                 self.after_cancel(self.pending)
             self.pending = self.after(120, self.update_view)
@@ -2757,8 +3675,8 @@ class App(tk.Tk):
                 built = tr.normalize(json.load(fh))
         except Exception:
             return None
-        a = {k: v for k, v in built.items() if k != 'atmosphere'}
-        b = {k: v for k, v in tr.normalize(copy.deepcopy(self.P)).items() if k != 'atmosphere'}
+        a = {k: v for k, v in built.items() if k not in ('atmosphere', 'aurora', 'clouds')}
+        b = {k: v for k, v in tr.normalize(copy.deepcopy(self.P)).items() if k not in ('atmosphere', 'aurora', 'clouds')}
         return json.dumps(a, sort_keys=True) != json.dumps(b, sort_keys=True)
 
     def update_stale(self):
@@ -2768,24 +3686,36 @@ class App(tk.Tk):
             self.status('Settings changed since this build – press Build to update')
 
     def live_key(self):
-        return json.dumps({k: v for k, v in self.P.items() if k != 'atmosphere'}, sort_keys=True, default=str)
+        return json.dumps({k: v for k, v in self.P.items() if k not in ('atmosphere', 'rings')}, sort_keys=True, default=str)
 
     def update_view(self, from_live=False):
         self.pending = None
         v = self.view.get()
+        if v == 'aurora':
+            self.live_lab.configure(text='')
+            self.aurora_view()
+            return
+        if v == 'clouds':
+            self.live_lab.configure(text='')
+            self.clouds_view()
+            return
         if v == 'atmo':
             key = self.live_key()
-            if not tr.has_atmo(self.P):
+            if self.atmo_src != 'build' and not from_live:
+                self.request_live(key)
+            if not self.ingame_any():
                 self.view_src = None
                 if not self.proc:
-                    self.status('No atmosphere yet – tick “Scatterer atmosphere” on the Atmosphere tab')
+                    self.status('Nothing to show yet – tick an atmosphere, clouds or an aurora (or add glowing lava)')
             else:
                 self.atmo_request()
-                if self.atmo_src != 'build' and not from_live:
-                    self.request_live(key)
                 self.view_src = self.atmo_img
                 if not self.proc:
-                    self.status('In game: the Scatterer atmosphere as KSP’s map view shows it · drag left or right to move the sun')
+                    bits = [t for t, on in (('atmosphere', tr.has_atmo(self.P)), ('clouds', tr.has_clouds(self.P) and self.ig_clouds.get()),
+                                            ('aurora', tr.has_aurora(self.P) and self.ig_aurora.get()),
+                                            ('lava glow', self.ig_glow.get() and self.ingame_em()[0] is not None)) if on]
+                    self.status('In game: the planet as KSP’s map view shows it' + (' with ' + ', '.join(bits) if bits else '') +
+                                ' · drag left or right to move the sun')
             self.update_live_label(key)
             self.update_export_state()
             self.redraw()
@@ -2795,6 +3725,7 @@ class App(tk.Tk):
             L = self.live_last
             if L is not None:
                 col, hm, gx, gy = L['col'], L['hm'], L['gx'], L['gy']
+                em = L.get('em')
                 k = float(self.P['normal_strength'])
                 ocean = (hm < 0).astype(np.float32) if self.P['shape']['ocean'] else None
                 mode = self.show.get()
@@ -2806,11 +3737,16 @@ class App(tk.Tk):
                     gtex = tex
                     gx2, gy2 = gx * 0, gy * 0
                     ocean = None
+                    em = None
                 elif mode == 'Colour, no shading':
                     flat = Image.fromarray(col)
                     gtex, gx2, gy2 = col, gx, gy
+                    em = None
                 else:
-                    flat = Image.fromarray(np.clip(col.astype(np.float32) * tr.shade_map(gx, gy, k)[..., None], 0, 255).astype(np.uint8))
+                    fl = col.astype(np.float32) * tr.shade_map(gx, gy, k)[..., None]
+                    if em is not None:
+                        fl = fl + em.astype(np.float32) * np.float32(0.7)
+                    flat = Image.fromarray(np.clip(fl, 0, 255).astype(np.uint8))
                     gtex, gx2, gy2 = col, gx, gy
                 if flat.size != (1024, 512):
                     flat = flat.resize((1024, 512), Image.LANCZOS if flat.size[0] > 1024 else Image.BICUBIC)
@@ -2822,7 +3758,7 @@ class App(tk.Tk):
                 d.text((256 - d.textlength(hint, font=f17) / 2, 518), hint, fill=DIM, font=f17)
                 rng = 'height %.0f m to %.0f m' % (float(hm.min()), float(hm.max()))
                 d.text((536, 518), rng, fill=DIM, font=f17)
-                self.live_view = {'tex': gtex, 'gx': gx2, 'gy': gy2, 'ocean': ocean, 'k': k, 'sheet': sheet, 'hm': hm}
+                self.live_view = {'tex': gtex, 'gx': gx2, 'gy': gy2, 'ocean': ocean, 'k': k, 'sheet': sheet, 'hm': hm, 'em': em}
                 sheet = sheet.copy()
                 sheet.paste(self.globe(512), (0, 0))
                 self.view_src = sheet
@@ -2858,7 +3794,7 @@ class App(tk.Tk):
         pv = self.P['preview']
         vlat = max(-90.0, min(90.0, float(pv['view_lat']) + self.rot[1]))
         return tr.render_globe(lv['tex'], lv['gx'], lv['gy'], S, float(pv['tilt']), vlat, float(pv['view_lon']) + self.rot[0],
-                               lv['k'], ocean=lv['ocean'])
+                               lv['k'], ocean=lv['ocean'], emis=lv.get('em'))
 
     def sheet_xy(self, e):
         if self.view_geom is None:
@@ -3003,7 +3939,7 @@ class App(tk.Tk):
 
     def update_live_label(self, key=None):
         v = self.view.get()
-        if v not in ('live', 'atmo') or (v == 'atmo' and not tr.has_atmo(self.P)):
+        if v not in ('live', 'atmo') or (v == 'atmo' and not self.ingame_any()):
             txt = ''
         elif v == 'atmo' and self.atmo_src == 'build':
             txt = 'ground from the %s build' % self.res.get()
@@ -3089,8 +4025,8 @@ class App(tk.Tk):
                     if W != sizes[-1] and ('H', hk, sizes[-1]) in self.live_cache:
                         continue
                     t0 = time.time()
-                    col, hm, gx, gy = tr.live_maps(P, W, self.live_cache, cancel, workers=tr.THREADS)
-                    self.live_q.put((gen, key, hk, W, (col, hm, gx, gy), None, time.time() - t0))
+                    col, hm, gx, gy, em = tr.live_maps(P, W, self.live_cache, cancel, workers=tr.THREADS)
+                    self.live_q.put((gen, key, hk, W, (col, hm, gx, gy, em), None, time.time() - t0))
             except tr.Cancelled:
                 continue
             except Exception as ex:
@@ -3109,8 +4045,8 @@ class App(tk.Tk):
                         self.live_err = err
                         got = True
                 elif gen == self.live_gen:
-                    col, hm, gx, gy = maps
-                    self.live_last = {'key': key, 'hk': hk, 'W': W, 'col': col, 'hm': hm, 'gx': gx, 'gy': gy, 'dt': dt}
+                    col, hm, gx, gy, em = maps
+                    self.live_last = {'key': key, 'hk': hk, 'W': W, 'col': col, 'hm': hm, 'gx': gx, 'gy': gy, 'em': em, 'dt': dt}
                     got = True
         except queue.Empty:
             pass
@@ -3122,6 +4058,8 @@ class App(tk.Tk):
             else:
                 self.update_live_label()
         self.atmo_poll()
+        self.aurora_poll()
+        self.clouds_poll()
         try:
             self.after(100, self.live_poll)
         except tk.TclError:
@@ -3131,6 +4069,14 @@ class App(tk.Tk):
         if self.redraw_id:
             self.after_cancel(self.redraw_id)
         self.redraw_id = self.after(60, self.redraw)
+        if self.view.get() == 'clouds':
+            if getattr(self, 'cl_resize', None):
+                self.after_cancel(self.cl_resize)
+            self.cl_resize = self.after(400, self.clouds_request)
+        if self.view.get() == 'aurora':
+            if getattr(self, 'aur_resize', None):
+                self.after_cancel(self.aur_resize)
+            self.aur_resize = self.after(400, self.aurora_request)
         if self.view.get() == 'atmo':
             if getattr(self, 'atmo_resize', None):
                 self.after_cancel(self.atmo_resize)
@@ -3144,7 +4090,15 @@ class App(tk.Tk):
             self.view_geom = None
             msg = 'Making the preview…' if self.view.get() == 'live' else 'No picture yet'
             if self.view.get() == 'atmo':
-                msg = 'Drawing the atmosphere…' if tr.has_atmo(self.P) else 'No atmosphere – tick “Scatterer atmosphere” on the Atmosphere tab'
+                msg = 'Drawing the planet as in game…' if self.ingame_any() else 'Nothing to show yet – tick an atmosphere, clouds or an aurora'
+            if self.view.get() == 'clouds':
+                cp = getattr(self, 'cl_prog', None)
+                msg = ('Working out the wind… %d%%' % int(cp[1] * 100) if cp and cp[0] == 'wind' else
+                       'Making the clouds… %d%%' % int(cp[1] * 100) if cp else 'Making the clouds…')
+                if not tr.has_clouds(self.P):
+                    msg = 'No clouds – tick “Volumetric clouds” on the Clouds tab'
+            if self.view.get() == 'aurora':
+                msg = 'Drawing the aurora…' if tr.has_aurora(self.P) else 'No aurora – tick “Aurora” on the Aurora tab'
             self.canvas.create_text(cw // 2, ch // 2, text=msg, fill=DIM, font=(FONT, 12))
             return
         iw, ih = self.view_src.size

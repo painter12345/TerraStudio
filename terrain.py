@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw, ImageFont
 Image.MAX_IMAGE_PIXELS = None
 
 APP_NAME = 'Terra Studio'
-APP_VERSION = '0.1.5'
+APP_VERSION = '0.1.17'
 FROZEN = bool(getattr(sys, 'frozen', False))
 TOOL = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 ROOT = os.path.abspath(os.path.join(TOOL, '..', '..'))
@@ -83,6 +83,8 @@ DEFAULTS = {
     'volcanoes': {'count': 0, 'seed': 1, 'size_km': 300.0, 'height': 8000.0, 'caldera': 0.5, 'size_var': 0.5},
     'features': [],
     'plateaus': {'amount': 0.0, 'height': 1500.0, 'size': 1.0, 'edge': 0.35, 'flat': 0.8},
+    'ridge': {'height': 0.0, 'width': 40.0, 'coverage': 360.0, 'lon': 180.0, 'lat': 0.0, 'tilt': 0.0,
+              'segments': 0.0, 'ragged': 0.5, 'wander': 0.3, 'seed': 1},
     'water': {'rivers': 0.0, 'width': 4.0, 'depth': 80.0, 'valleys': 0.5, 'valley_width': 8.0},
     'cracks': {'amount': 0.0, 'style': 'lines', 'count': 8, 'curvy': 0.3, 'width': 6.0, 'depth': 300.0,
                'ridges': 0.5, 'cell_size': 250.0, 'seed': 1},
@@ -104,12 +106,13 @@ DEFAULTS = {
         'brightness': 0.0, 'contrast': 1.0, 'saturation': 1.0,
         'river_color': None, 'river_amount': 1.0, 'crack_color': [120, 76, 56], 'crack_amount': 0.7,
     },
+    'rings': {'enabled': False},
     'normal_strength': 2.0,
     'files': {'height': '', 'color': '', 'normal': ''},
     'preview': {'tilt': 0, 'view_lat': 15, 'view_lon': 0},
 }
 
-HEIGHT_KEYS = ('seed', 'radius', 'shape', 'relief', 'craters', 'volcanoes', 'features', 'plateaus', 'water', 'cracks')
+HEIGHT_KEYS = ('seed', 'radius', 'shape', 'relief', 'craters', 'volcanoes', 'features', 'plateaus', 'water', 'cracks', 'ridge')
 CRACK_STYLES = ('lines', 'cells')
 FEATURE_TYPES = ('crater', 'basin', 'volcano', 'mountain', 'plateau')
 FEATURE = {'type': 'crater', 'lat': 0.0, 'lon': 180.0, 'size': 120.0, 'height': 0.0, 'fresh': 1.0}
@@ -162,6 +165,24 @@ def normalize(P):
     v = P['volcanoes']
     v['count'] = int(max(0, v['count']))
     P['plateaus'].pop('steps', None)
+    rg = P['ridge']
+    for k in ('height', 'width', 'coverage', 'lon', 'lat', 'tilt', 'segments', 'ragged', 'wander'):
+        try:
+            rg[k] = float(rg[k])
+        except (TypeError, ValueError):
+            rg[k] = float(DEFAULTS['ridge'][k])
+    rg['height'] = max(0.0, rg['height'])
+    rg['width'] = max(0.5, rg['width'])
+    rg['coverage'] = max(5.0, min(360.0, rg['coverage']))
+    rg['lon'] = rg['lon'] % 360.0
+    rg['lat'] = max(-60.0, min(60.0, rg['lat']))
+    rg['tilt'] = max(-60.0, min(60.0, rg['tilt']))
+    for k in ('segments', 'ragged', 'wander'):
+        rg[k] = max(0.0, min(1.0, rg[k]))
+    try:
+        rg['seed'] = int(rg.get('seed', 1))
+    except (TypeError, ValueError):
+        rg['seed'] = 1
     ck = P['cracks']
     ck['count'] = int(max(1, min(16, ck['count'])))
     ck['style'] = ck['style'] if ck.get('style') in CRACK_STYLES else 'lines'
@@ -199,11 +220,22 @@ def normalize(P):
         if not fl.get(k):
             fl[k] = n + suf
     P['atmosphere'] = atmo_entry(P.get('atmosphere'))
+    P['aurora'] = aurora_entry(P.get('aurora'))
+    P['lava'] = lava_entry(P.get('lava'))
+    P['clouds'] = cloud_entry(P.get('clouds'))
+    P['lava_ocean'] = lava_ocean_entry(P.get('lava_ocean'))
+    P['emission'] = emission_entry(P.get('emission'))
+    P['rings'] = ring_entry(P.get('rings'))
     return P
 
 
 def height_key(P):
-    return json.dumps({k: P[k] for k in HEIGHT_KEYS}, sort_keys=True)
+    d = {k: P[k] for k in HEIGHT_KEYS}
+    if has_lava(P):
+        d['lava'] = lava_shape(P)
+    if volcano_glow(P):
+        d['vglow'] = round(float(P['emission']['flows']), 4)
+    return json.dumps(d, sort_keys=True)
 
 
 def ss(a, b, x):
@@ -755,6 +787,9 @@ def volcano_list(P):
     return {'v': v.astype(np.float32), 'D': float(V['size_km']) * f, 'Hm': float(V['height']) * f}
 
 
+VOLCANO_FLOWS = [0.5]
+
+
 def one_volcano(hm, mk, X, Y, Z, W, H, r0, c, Dk, Hm, caldera, R, nid):
     Ra = Dk * 500.0 / R
     if Ra * W / (2 * math.pi) < 0.8 or Hm == 0:
@@ -781,6 +816,24 @@ def one_volcano(hm, mk, X, Y, Z, W, H, r0, c, Dk, Hm, caldera, R, nid):
     if mk is not None:
         t = ss(1.05, 0.25, r) * np.clip(0.65 + 0.8 * perlin(sx * q2 + o[1], sy * q2 + o[2], sz * q2 + o[0], 5201 + nid), 0, 1)
         mk[2][idx] = np.maximum(mk[2][idx], t.astype(np.float16))
+        if mk.shape[0] > 9:
+            gw = (1 - ss(rc * 0.45, rc * 1.0, r)) * np.float32(0.6 + 0.4 * caldera)
+            fl = VOLCANO_FLOWS[0]
+            if fl > 0:
+                ax = np.array([0, 0, 1], np.float32) if abs(float(c[2])) < 0.9 else np.array([1, 0, 0], np.float32)
+                e1 = np.cross(c, ax); e1 = e1 / np.linalg.norm(e1); e2 = np.cross(c, e1)
+                th = np.arctan2(sx * e2[0] + sy * e2[1] + sz * e2[2], sx * e1[0] + sy * e1[1] + sz * e1[2])
+                q3 = np.float32(4.0 / Ra)
+                wig = perlin(sx * q3 + o[0] + 3.1, sy * q3 + o[1], sz * q3 + o[2], 5301 + nid) * np.float32(2.6)
+                wig = wig + perlin(sx * q3 * 2.3 + o[1], sy * q3 * 2.3 + o[2], sz * q3 * 2.3 + o[0], 5302 + nid) * np.float32(0.9)
+                k = 4 + nid % 4
+                st = np.cos(th * np.float32(k) + np.float32(nid * 1.7) + wig)
+                wd = np.float32(0.72) + np.float32(0.22) * np.clip(r / np.float32(0.7), 0, 1)
+                ln = np.clip(np.float32(0.55) + np.float32(0.45) * perlin(np.cos(th * k) * 2 + o[1], np.sin(th * k) * 2 + o[2], o[0] + nid, 5303 + nid), 0, 1)
+                end = ln * np.float32(0.5) + np.float32(0.2)
+                ch = ss(wd, np.float32(0.995), st) * (1 - ss(end * np.float32(0.6), end, r)) * ss(np.float32(0.05), np.float32(0.16), r)
+                gw = np.maximum(gw, ch * np.float32(fl) * (1 - np.float32(0.8) * np.clip(r / end, 0, 1)))
+            mk[9][idx] = np.maximum(mk[9][idx], gw.astype(np.float16))
 
 
 def one_mountain(hm, X, Y, Z, W, H, r0, c, Dk, Hm, R, nid, fmax):
@@ -1195,6 +1248,484 @@ def apply_cracks(P, CK, hm, mk, X, Y, Z, W, H, r0, fmax):
         np.maximum(mk[4], (cw * vis).astype(np.float16), out=mk[4])
 
 
+def ridge_setup(P):
+    G = P.get('ridge') or {}
+    if float(G.get('height', 0)) <= 0:
+        return None
+    Rk = float(P['radius']) / 1000.0
+    c0 = lonlat_vec(0.0, float(G['lon'])).astype(np.float64)
+    z = np.array([0.0, 0.0, 1.0])
+    t = math.radians(float(G['tilt']))
+    a = z * math.cos(t) + np.cross(c0, z) * math.sin(t)
+    a /= np.linalg.norm(a)
+    e2 = np.cross(a, c0)
+    e2 /= np.linalg.norm(e2)
+    return {'a': a.astype(np.float32), 'e1': c0.astype(np.float32), 'e2': e2.astype(np.float32),
+            'hw': max(float(G['width']), 0.5) * 0.5 / Rk, 'off': math.radians(float(G['lat'])),
+            'half': math.radians(float(G['coverage'])) * 0.5, 'h': float(G['height']),
+            'seg': float(G['segments']), 'rag': float(G['ragged']), 'wan': float(G['wander']),
+            'sd': int(G.get('seed', 1)) * 1000 + 701}
+
+
+def ring_noise(ct, st, k, seed, octs=1, gain=0.5):
+    s = np.zeros(ct.shape, np.float32)
+    amp, tot = 1.0, 0.0
+    for i in range(octs):
+        f = np.float32(k * 2 ** i)
+        o = OFF[(seed + i) % 32]
+        s += np.float32(amp) * perlin(ct * f + o[0], st * f + o[1], np.full(ct.shape, o[2] + 0.37 * i, np.float32), seed * 131 + i)
+        tot += amp
+        amp *= gain
+    return s * np.float32(1.6 / tot)
+
+
+def apply_ridge(G, hm, X, Y, Z, W, fmax):
+    px = 2 * math.pi / W
+    hw = max(G['hw'], 1.5 * px)
+    a, e1, e2 = G['a'], G['e1'], G['e2']
+    sd, rag, wan = G['sd'], G['rag'], G['wan']
+    s = np.clip(X * a[0] + Y * a[1] + Z * a[2], -1, 1)
+    d0 = np.arcsin(s) - np.float32(G['off'])
+    reach = np.float32(hw * (2.6 * 1.4 + 0.6 * rag) + wan * (2.0 * hw + 0.035) * 1.7 + 1.5 * px)
+    near = np.abs(d0) < reach
+    if not near.any():
+        return
+    idx = np.flatnonzero(near)
+    x, y, zz = X.reshape(-1)[idx], Y.reshape(-1)[idx], Z.reshape(-1)[idx]
+    d = d0.reshape(-1)[idx]
+    th = np.arctan2(x * e2[0] + y * e2[1] + zz * e2[2], x * e1[0] + y * e1[1] + zz * e1[2])
+    ct, st = np.cos(th).astype(np.float32), np.sin(th).astype(np.float32)
+    if wan > 0:
+        d = d - np.float32(wan * (2.0 * hw + 0.035)) * ring_noise(ct, st, 1.3, sd + 1, 3, 0.45)
+    m = np.ones(d.shape, np.float32)
+    if G['half'] < math.pi - 1e-4:
+        half = G['half']
+        tp = min(half, max(0.2, half * 0.35))
+        e = np.abs(th) + np.float32(tp * 0.25) * ring_noise(ct, st, 4.0, sd + 2, 2)
+        m *= 1 - ss(np.float32(half - tp), np.float32(half), e)
+    if G['seg'] > 0:
+        t0 = np.float32(-1.1 + 1.9 * G['seg'])
+        sn = ring_noise(ct, st, 1.8, sd + 3, 2, 0.35)
+        m *= ss(t0 - np.float32(0.45), t0 + np.float32(0.45), sn)
+    env = np.float32(1.0) + np.float32(0.45 * rag) * ring_noise(ct, st, 3.0, sd + 4, 4, 0.55)
+    wv = np.float32(1.0) + np.float32(0.3 * rag) * ring_noise(ct, st, 5.0, sd + 5, 2)
+    hwv = np.float32(hw) * wv * np.sqrt(np.maximum(m, np.float32(0.0004)))
+    m = m * m
+    if rag > 0:
+        f0 = min(0.9 / hw, fmax)
+        d = d + np.float32(0.3 * rag * hw) * fbm(x, y, zz, f0, fmax, sd + 6, 0.5, 5)
+    r = np.abs(d) / hwv
+    prof = np.float32(0.6) * (1 - ss(np.float32(0), np.float32(1), r)) + np.float32(0.4) * (1 - ss(np.float32(0), np.float32(2.4), r))
+    h = np.float32(G['h']) * prof * m * np.maximum(env, np.float32(0.15))
+    if rag > 0:
+        f1 = min(1.6 / hw, fmax)
+        h = h * (np.float32(1.0) + np.float32(0.35 * rag) * fbm(x, y, zz, f1, fmax, sd + 7, 0.55, 6))
+    hm.reshape(-1)[idx] += np.maximum(h, np.float32(0))
+
+
+RING = {'enabled': False, 'inner': 1.35, 'outer': 2.3, 'angle': 0.0, 'opacity': 0.85, 'zones': 4, 'ringlets': 0.6,
+        'detail': 1.0, 'edge': 0.3, 'variation': 0.4, 'gaps': [[0.62, 0.035, 1.0], [0.88, 0.008, 0.9]],
+        'inner_color': None, 'middle_color': None, 'outer_color': None, 'size': 2048, 'pattern': 0, 'view': 18.0}
+
+
+def ring_entry(r):
+    e = copy.deepcopy(RING)
+    e.update({k: copy.deepcopy(v) for k, v in (r if isinstance(r, dict) else {}).items() if k in RING})
+    gaps = []
+    for g in e['gaps'] or []:
+        try:
+            gaps.append([min(max(float(g[0]), 0.0), 1.0), min(max(float(g[1]), 0.0005), 0.5), min(max(float(g[2]), 0.0), 1.0)])
+        except (TypeError, ValueError, IndexError):
+            pass
+    e['gaps'] = gaps
+    e['enabled'] = bool(e['enabled'])
+    e['inner'] = max(1.0, float(e['inner']))
+    e['outer'] = max(e['inner'] + 0.05, float(e['outer']))
+    try:
+        e['size'] = int(e['size']) if int(e['size']) in (1024, 2048, 4096) else 2048
+    except (TypeError, ValueError):
+        e['size'] = 2048
+    for k in ('inner_color', 'middle_color', 'outer_color'):
+        if e.get(k) is not None:
+            try:
+                e[k] = [int(max(0, min(255, round(float(v))))) for v in e[k]][:3]
+            except (TypeError, ValueError):
+                e[k] = None
+    return e
+
+
+def has_rings(P):
+    return bool((P.get('rings') or {}).get('enabled'))
+
+
+def ring_colours(P, e):
+    cols = np.array([s_[1] for s_ in P['colors']['stops']], np.float32).reshape(-1, 3)
+    m = cols.mean(0)
+    grey = float(np.dot(m, [0.299, 0.587, 0.114]))
+    d = m * 0.55 + grey * 0.45
+    auto = (np.clip(d * 0.78, 0, 255), np.clip(d * 1.05 + 12, 0, 255), np.clip(d * 0.95 + 6, 0, 255))
+    out = []
+    for k, a in zip(('inner_color', 'middle_color', 'outer_color'), auto):
+        out.append(np.array(e[k], np.float32) if e.get(k) else a)
+    return out
+
+
+def noise1d(x, freq, rng):
+    n = int(np.ceil(freq)) + 2
+    v = rng.random(n + 1).astype(np.float32)
+    t = x * np.float32(freq)
+    i = np.floor(t).astype(np.int32)
+    f = t - i
+    f = f * f * (3 - 2 * f)
+    return v[i] * (1 - f) + v[i + 1] * f
+
+
+def fbm1d(x, freq, rng, o=5):
+    s = 0; a = 1.0; n = 0
+    for k in range(o):
+        s = s + a * noise1d(x, freq * 2 ** k, rng); n += a; a *= 0.5
+    return s / n
+
+
+def ring_profile(P, n=2048):
+    e = ring_entry(P.get('rings'))
+    rng = np.random.default_rng(int(P.get('seed', 1)) * 7 + 991 + int(e['pattern']) * 104729)
+    x = ((np.arange(n) + 0.5) / n).astype(np.float32)
+    k = max(1, int(e['zones']))
+    bounds = np.sort(rng.uniform(0.08, 0.92, k - 1))
+    levels = rng.uniform(0.25, 1.0, k)
+    levels = levels / levels.max()
+    dens = np.full(n, levels[0], np.float32)
+    for b, l0, l1 in zip(bounds, levels[:-1], levels[1:]):
+        w = rng.uniform(0.004, 0.03)
+        dens += np.float32(l1 - l0) * ss(np.float32(b - w), np.float32(b + w), x)
+    det = max(float(e['detail']), 0.1)
+    rl = float(e['ringlets'])
+    n1 = fbm1d(x, 60 * det, rng)
+    dens *= np.clip(1 + rl * (2 * n1 - 1) * 1.4, 0, None)
+    for pos, wid, dep in e['gaps']:
+        g = np.exp(-(np.abs(x - pos) / (wid / 2)) ** 6)
+        dens *= 1 - np.float32(dep) * g
+    soft = np.float32(0.002 + float(e['edge']) * 0.04)
+    dens *= ss(np.float32(0), soft, x) * (1 - ss(1 - soft, np.float32(1), x))
+    alpha = np.clip(dens * np.float32(e['opacity']), 0, 1)
+    ci, cm, co = ring_colours(P, e)
+    t = x[:, None]
+    col = np.where(t < 0.5, ci + (cm - ci) * (t / 0.5), cm + (co - cm) * ((t - 0.5) / 0.5))
+    n2 = fbm1d(x, 25 * det, rng)
+    col = col * (1 + float(e['variation']) * 0.35 * (2 * n2 - 1))[:, None]
+    col = col * (0.85 + 0.15 * np.clip(dens, 0, 1))[:, None]
+    return np.clip(col, 0, 255).astype(np.float32), alpha.astype(np.float32)
+
+
+def ring_image(P, n=None, h=16):
+    e = ring_entry(P.get('rings'))
+    col, a = ring_profile(P, n or e['size'])
+    rgba = np.concatenate([col, (a * 255)[:, None]], 1)[::-1]
+    return np.repeat((rgba + 0.5).clip(0, 255).astype(np.uint8)[None], h, 0)
+
+
+def ring_scene(tex, col, alpha, e, w=560, h=300, light=(0.75, -0.45, 0.5), ss_=2, bg=(13, 15, 20)):
+    W, Hh = w * ss_, h * ss_
+    el = np.radians(max(2.0, min(89.0, float(e.get('view', 18.0)))))
+    ang = np.radians(float(e.get('angle', 0.0)))
+    ro = float(e['outer']); ri = float(e['inner'])
+    half_w = ro * 1.06
+    half_h = max(1.06, ro * np.sin(el) * 1.06 + 0.1)
+    sc = min(W / (2 * half_w), Hh / (2 * half_h))
+    xs = (np.arange(W) + 0.5 - W / 2) / sc
+    ys = (Hh / 2 - np.arange(Hh) - 0.5) / sc
+    X, Yv = np.meshgrid(xs.astype(np.float32), ys.astype(np.float32))
+    c = np.array([0, -np.cos(el), np.sin(el)], np.float32)
+    up = np.array([0, np.sin(el), np.cos(el)], np.float32)
+    O = X[..., None] * np.array([1, 0, 0], np.float32) + Yv[..., None] * up + 10 * c
+    d = -c
+    L = np.array(light, np.float32); L /= np.linalg.norm(L)
+    nr = np.array([0, -np.sin(ang), np.cos(ang)], np.float32)
+    b = O @ d
+    cc = (O * O).sum(-1) - 1
+    disc = b * b - cc
+    hit_s = disc >= 0
+    ts = -b - np.sqrt(np.maximum(disc, 0))
+    tr_ = -(O @ nr) / float(d @ nr)
+    Q = O + tr_[..., None] * d
+    rq = np.sqrt((Q * Q).sum(-1))
+    n = len(alpha)
+
+    def ring_at(r):
+        u = (r - ri) / (ro - ri)
+        inside = (u >= 0) & (u <= 1)
+        i = np.clip((u * n).astype(np.int32), 0, n - 1)
+        return inside, i
+    in_r, ir = ring_at(rq)
+    a_r = np.where(in_r, alpha[ir], 0)
+    out = np.broadcast_to(np.array(bg, np.float32), X.shape + (3,)).copy()
+    S = O + ts[..., None] * d
+    Hs, Ws = tex.shape[:2]
+    lat = np.arcsin(np.clip(S[..., 2], -1, 1))
+    lon = np.arctan2(S[..., 1], S[..., 0])
+    py = np.clip(((0.5 - lat / np.pi) * Hs).astype(np.int32), 0, Hs - 1)
+    px = ((lon / (2 * np.pi)) % 1 * Ws).astype(np.int32) % Ws
+    shade = np.clip(S @ L, 0, 1) * 0.95 + 0.04
+    tl = -(S @ nr) / max(abs(float(L @ nr)), 1e-4) * np.sign(float(L @ nr))
+    Qs = S + tl[..., None] * L
+    in_s, isd = ring_at(np.sqrt((Qs * Qs).sum(-1)))
+    shade = shade * np.where((tl > 0) & in_s, 1 - 0.85 * alpha[isd], 1)
+    planet = tex[py, px].astype(np.float32) * shade[..., None]
+    out[hit_s] = planet[hit_s]
+    bq = Q @ L
+    cq = (Q * Q).sum(-1) - 1
+    dq = bq * bq - cq
+    shadowed = (dq > 0) & (-bq - np.sqrt(np.maximum(dq, 0)) > 0)
+    rl = (0.25 + 0.75 * abs(float(L @ nr))) * np.where(shadowed, 0.12, 1.0)
+    rc = col[ir] * rl[..., None]
+    front = in_r & (~hit_s | (tr_ < ts))
+    out = np.where(front[..., None], rc * a_r[..., None] + out * (1 - a_r[..., None]), out)
+    img = Image.fromarray(np.clip(out, 0, 255).astype(np.uint8))
+    return img.resize((w, h), Image.LANCZOS) if ss_ > 1 else img
+
+
+def ring_snippet(P, path):
+    e = ring_entry(P.get('rings'))
+    return ('Rings\n{\n\tRing\n\t{\n\t\tinnerRadius = %d\n\t\touterRadius = %d\n\t\tangle = %s\n'
+            '\t\ttexture = %s\n\t\tcolor = 1,1,1,1\n\t\tlockRotation = false\n\t\tuseNewShader = true\n\t}\n}\n') % (
+        round(e['inner'] * 1000), round(e['outer'] * 1000), ('%g' % float(e['angle'])), path)
+
+
+LAVA = {'amount': 0.0, 'mode': 'star', 'lat': 0.0, 'lon': 180.0, 'spread': 105.0, 'seed': 1,
+        'plate_km': 90.0, 'shrink': 0.65, 'crack_km': 7.0, 'widen': 2.5, 'jagged': 0.5,
+        'tilt': 1500.0, 'depth': 900.0, 'core': 16.0, 'core_depth': 1200.0, 'rafts': 0.6,
+        'pools': 0, 'pool_km': 90.0,
+        'color': [255, 92, 20], 'hot_color': [255, 196, 92], 'crust_color': [36, 30, 28], 'crust_amount': 0.85,
+        'edge_glow': 0.5, 'glow': 0.85}
+LAVA_MODES = ('star', 'all')
+LAVA_LOOK = ('color', 'hot_color', 'crust_color', 'crust_amount', 'edge_glow', 'glow')
+
+
+def lava_entry(a):
+    e = copy.deepcopy(LAVA)
+    a = a if isinstance(a, dict) else {}
+    for k, v in a.items():
+        if k in LAVA:
+            e[k] = copy.deepcopy(v)
+    for k in ('amount', 'lat', 'lon', 'spread', 'plate_km', 'shrink', 'crack_km', 'widen', 'jagged', 'tilt', 'depth',
+              'core', 'core_depth', 'rafts', 'pool_km', 'crust_amount', 'edge_glow', 'glow'):
+        try:
+            e[k] = float(e[k])
+        except (TypeError, ValueError):
+            e[k] = float(LAVA[k])
+    for k in ('seed', 'pools'):
+        try:
+            e[k] = int(round(float(e[k])))
+        except (TypeError, ValueError):
+            e[k] = int(LAVA[k])
+    for k in ('color', 'hot_color', 'crust_color'):
+        try:
+            e[k] = [int(max(0, min(255, round(float(c))))) for c in e[k]][:3]
+            if len(e[k]) != 3:
+                raise ValueError
+        except (TypeError, ValueError):
+            e[k] = list(LAVA[k])
+    e['mode'] = e['mode'] if e['mode'] in LAVA_MODES else 'star'
+    e['amount'] = max(0.0, min(1.0, e['amount']))
+    e['lat'] = max(-90.0, min(90.0, e['lat']))
+    e['lon'] = e['lon'] % 360.0
+    e['spread'] = max(5.0, min(180.0, e['spread']))
+    e['plate_km'] = max(2.0, e['plate_km'])
+    e['crack_km'] = max(0.1, e['crack_km'])
+    for k in ('shrink', 'jagged', 'rafts', 'crust_amount', 'edge_glow'):
+        e[k] = max(0.0, min(1.0, e[k]))
+    e['widen'] = max(0.0, e['widen'])
+    e['core'] = max(0.0, min(90.0, e['core']))
+    e['pools'] = max(0, min(40, e['pools']))
+    e['pool_km'] = max(1.0, e['pool_km'])
+    e['glow'] = max(0.0, min(2.0, e['glow']))
+    e['seed'] = max(1, e['seed'])
+    return e
+
+
+def has_lava(P):
+    return float((P.get('lava') or {}).get('amount', 0)) > 0
+
+
+def lava_shape(P):
+    return {k: v for k, v in lava_entry(P.get('lava')).items() if k not in LAVA_LOOK}
+
+
+def lava_setup(P):
+    if not has_lava(P):
+        return None
+    L = lava_entry(P.get('lava'))
+    c = lonlat_vec(L['lat'], L['lon'])
+    rng = np.random.default_rng([L['seed'], 77])
+    pools = []
+    for i in range(L['pools']):
+        v = None
+        for _ in range(60):
+            q = rng.normal(size=3)
+            q /= np.linalg.norm(q)
+            if L['mode'] == 'all' or math.degrees(math.acos(max(-1.0, min(1.0, float(q @ c))))) < L['spread'] * 0.8:
+                v = q
+                break
+        if v is None:
+            v = c.copy()
+        pools.append((v.astype(np.float32), float(rng.uniform(0.6, 1.4)), int(rng.integers(1, 1 << 30))))
+    return {'L': L, 'c': c, 'pools': pools}
+
+
+def worley_cells(X, Y, Z, f, seed):
+    x = X * np.float32(f); y = Y * np.float32(f); z = Z * np.float32(f)
+    xf = np.floor(x); yf = np.floor(y); zf = np.floor(z)
+    fx = x - xf; fy = y - yf; fz = z - zf
+    xi = xf.astype(np.int32).view(U); yi = yf.astype(np.int32).view(U); zi = zf.astype(np.int32).view(U)
+    sd = U((seed * 0x27D4EB2F + 0x7F4A7C15) & 0xFFFFFFFF)
+    F1 = np.full(X.shape, np.float32(9)); F2 = np.full(X.shape, np.float32(9))
+    H1 = np.zeros(X.shape, U)
+    VX = np.zeros(X.shape, np.float32); VY = np.zeros(X.shape, np.float32); VZ = np.zeros(X.shape, np.float32)
+    for dx in (-1, 0, 1):
+        hx = (xi + U(dx & 0xFFFFFFFF)) * U(0x9E3779B1)
+        for dy in (-1, 0, 1):
+            hy = (yi + U(dy & 0xFFFFFFFF)) * U(0x85EBCA77)
+            for dz in (-1, 0, 1):
+                h = hx ^ hy ^ ((zi + U(dz & 0xFFFFFFFF)) * U(0xC2B2AE3D)) ^ sd
+                h *= U(0x2C1B3C6D); h ^= h >> U(15); h *= U(0x297A2D39); h ^= h >> U(13)
+                jx = (h & U(1023)).astype(np.float32) * np.float32(1 / 1023.0)
+                jy = ((h >> U(10)) & U(1023)).astype(np.float32) * np.float32(1 / 1023.0)
+                jz = ((h >> U(20)) & U(1023)).astype(np.float32) * np.float32(1 / 1023.0)
+                ex = np.float32(dx) + jx - fx; ey = np.float32(dy) + jy - fy; ez = np.float32(dz) + jz - fz
+                d2 = ex * ex + ey * ey + ez * ez
+                near = d2 < F1
+                F2 = np.where(near, F1, np.minimum(F2, d2))
+                F1 = np.where(near, d2, F1)
+                H1 = np.where(near, h, H1)
+                VX = np.where(near, ex, VX); VY = np.where(near, ey, VY); VZ = np.where(near, ez, VZ)
+    return np.sqrt(F1), np.sqrt(F2), H1, VX, VY, VZ
+
+
+def cell_rand(h, k):
+    g = (h ^ U((0x5BD1E995 * (k + 1)) & 0xFFFFFFFF)) * U(0x27D4EB2F)
+    g ^= g >> U(15)
+    return (g & U(65535)).astype(np.float32) * np.float32(2 / 65535.0) - 1
+
+
+def apply_lava(P, LV, hm, mk, X, Y, Z, W, H, r0, fmax):
+    L = LV['L']
+    Rk = float(P['radius']) / 1000.0
+    c = LV['c']
+    ang = np.degrees(np.arccos(np.clip(X * c[0] + Y * c[1] + Z * c[2], -1, 1))).astype(np.float32)
+    mask = ang < L['spread'] * 1.3 if L['mode'] == 'star' else np.ones(X.shape, bool)
+    for v, sf, ps in LV['pools']:
+        R = L['pool_km'] * sf / Rk
+        mask |= np.arccos(np.clip(X * v[0] + Y * v[1] + Z * v[2], -1, 1)) < R * 1.6
+    idx = np.flatnonzero(mask)
+    if not idx.size:
+        return
+    g = lambda a: a.reshape(-1)[idx]
+    hn, lv, halo, heat, hot = lava_points(P, LV, g(X), g(Y), g(Z), g(ang), g(hm).copy(), W, fmax)
+    hm.reshape(-1)[idx] = hn
+    if mk is not None and mk.shape[0] > 5:
+        for ch, v in ((5, lv), (6, halo), (7, heat), (8, hot)):
+            m = mk[ch].reshape(-1)
+            m[idx] = np.maximum(m[idx], v.astype(np.float16))
+
+
+def lava_points(P, LV, X, Y, Z, ang, hm, W, fmax):
+    L = LV['L']
+    Rk = float(P['radius']) / 1000.0
+    px = 2 * math.pi / W
+    sd = int(L['seed']) * 1000 + 503
+    amt = float(L['amount'])
+    if L['mode'] == 'star':
+        jit = fbm(X, Y, Z, 1.5, min(8.0, fmax), sd + 3, 0.5, 3) * np.float32(L['spread'] * 0.2)
+        heat = (1 - ss(np.float32(0), np.float32(L['spread']), ang + jit)) ** np.float32(0.8)
+    else:
+        heat = np.clip(np.float32(0.6) + np.float32(0.4) * fbm(X, Y, Z, 1.2, min(6.0, fmax), sd + 3, 0.5, 3), 0, 1)
+    heat = (heat * np.float32(amt)).astype(np.float32)
+    plate = max(float(L['plate_km']), 1.0) / Rk
+    jg = np.float32(float(L['jagged']) * plate * 0.45)
+    if jg > 0:
+        wf = min(1.2 / plate, fmax)
+        Xw = X + jg * fbm(X, Y, Z, wf, fmax, sd + 11, 0.55, 4)
+        Yw = Y + jg * fbm(X, Y, Z, wf, fmax, sd + 13, 0.55, 4)
+        Zw = Z + jg * fbm(X, Y, Z, wf, fmax, sd + 17, 0.55, 4)
+    else:
+        Xw, Yw, Zw = X, Y, Z
+    sh = float(L['shrink'])
+    lv = np.zeros(X.shape, np.float32)
+    halo = np.zeros(X.shape, np.float32)
+    rel = np.zeros(X.shape, np.float32)
+    raft = None
+    levels = [(1.0, None), (1 / 2.3, 0.85 - 0.5 * sh), (1 / 5.0, 0.97 - 0.4 * sh)]
+    cw0 = float(L['crack_km']) * 0.5 / Rk
+    for k, (scale, thr) in enumerate(levels):
+        if thr is None:
+            gate = ss(np.float32(0.0), np.float32(0.06), heat)
+        else:
+            if sh <= 0:
+                break
+            gate = ss(np.float32(thr), np.float32(thr + 0.15), heat)
+            if not (gate > 0.002).any():
+                continue
+        f = 1.0 / (plate * scale)
+        F1, F2, hh, vx, vy, vz = worley_cells(Xw, Yw, Zw, f, sd + 31 * k)
+        e = (F2 - F1) * np.float32(0.5 / f)
+        hw0 = cw0 * (0.75 if k else 1.0)
+        hwb = max(hw0, 0.7 * px)
+        hw = np.float32(hwb) * (1 + np.float32(L['widen'] * (1.0 if k == 0 else 0.6)) * heat)
+        vis = np.float32(min(1.0, hw0 / (0.7 * px)))
+        wob = fbm(X, Y, Z, min(0.4 / hwb, fmax), fmax, sd + 41 + k, 0.5, 3) * hw * np.float32(0.35)
+        ed = e + wob
+        np.maximum(lv, (1 - ss(hw * np.float32(0.35), hw, ed)) * gate * vis, out=lv)
+        np.maximum(halo, np.exp(-(ed / (hw * np.float32(3.0))) ** 2) * gate, out=halo)
+        a = cell_rand(hh, 0); bx = cell_rand(hh, 1); by = cell_rand(hh, 2); bz = cell_rand(hh, 3)
+        slab = np.float32(0.35) * a - np.float32(0.9) * (bx * vx + by * vy + bz * vz)
+        rel += np.float32(L['tilt'] * (1.0 if k == 0 else 0.45 * scale ** 0.5)) * slab * gate * (np.float32(0.4) + np.float32(0.6) * heat)
+        raft = ss(np.float32(0.18), np.float32(0.42), (F2 - F1)) * ss(np.float32(0.0), np.float32(0.25), np.float32(0.5) + np.float32(0.5) * cell_rand(hh, 4))
+    core = np.zeros(X.shape, np.float32)
+    if L['mode'] == 'star' and L['core'] > 0:
+        cj = fbm(X, Y, Z, 4.0, fmax, sd + 61, 0.55, 5) * np.float32(L['core'] * 0.35)
+        core = (1 - ss(np.float32(L['core'] * 0.5), np.float32(L['core']), ang + cj)) * np.float32(min(1.0, amt * 1.5))
+    rafts = np.float32(L['rafts'])
+    pool = np.zeros(X.shape, np.float32)
+    for v, sf, ps in LV['pools']:
+        R = L['pool_km'] * sf / Rk
+        r = np.arccos(np.clip(X * v[0] + Y * v[1] + Z * v[2], -1, 1)).astype(np.float32)
+        pj = fbm(X, Y, Z, min(2.5 / R, fmax), fmax, sd + (ps % 997), 0.55, 5) * np.float32(0.35)
+        np.maximum(pool, 1 - ss(np.float32(0.7 * R), np.float32(R), r * (1 + pj)), out=pool)
+    melt = np.maximum(core, pool)
+    if raft is None:
+        raft = np.zeros(X.shape, np.float32)
+    np.maximum(lv, melt * (1 - raft * rafts), out=lv)
+    hot = np.clip(core * (1 - raft * rafts * np.float32(0.6)) + pool * np.float32(0.55) + heat ** 4 * np.float32(0.35) * lv, 0, 1)
+    level = hm - np.float32(L['depth']) * (np.float32(0.6) + np.float32(0.4) * heat)
+    out = (hm + rel * (1 - melt)) * (1 - lv) + level * lv
+    out -= np.float32(L['core_depth']) * core * (1 - np.float32(0.15) * raft * rafts)
+    out -= np.float32(L['depth'] * 0.5) * pool * (1 - raft * rafts)
+    return out.astype(np.float32), lv, halo * (1 - lv), heat, hot
+
+
+def lava_colours(L, mk, n2=None):
+    lv = mk[5].astype(np.float32); halo = mk[6].astype(np.float32)
+    heat = mk[7].astype(np.float32); hot = mk[8].astype(np.float32)
+    t = np.clip(hot + heat * heat * np.float32(0.35), 0, 1)[..., None]
+    lc = np.array(L['color'], np.float32) * (1 - t) + np.array(L['hot_color'], np.float32) * t
+    if n2 is not None:
+        lc = lc * (1 + np.float32(0.12) * n2)[..., None]
+    return lv, halo, heat, hot, lc
+
+
+def lava_colourize(P, col, mk, n2):
+    L = lava_entry(P.get('lava'))
+    lv, halo, heat, hot, lc = lava_colours(L, mk, n2)
+    torn = ss(np.float32(0.0), np.float32(0.08), heat) * np.float32(L['crust_amount'])
+    crust = np.array(L['crust_color'], np.float32) * (1 + np.float32(0.18) * n2)[..., None]
+    col = col + (crust - col) * torn[..., None]
+    eg = (halo * np.float32(L['edge_glow']) * np.float32(0.4))[..., None]
+    col = col + (lc * np.float32(0.75) - col) * eg
+    col = col + (lc - col) * lv[..., None]
+    return col
+
+
 def default_feature(t, radius):
     Rk = radius / 1000.0
     size = {'crater': 0.12, 'basin': 0.6, 'volcano': 0.4, 'mountain': 0.35, 'plateau': 0.3}[t] * Rk
@@ -1234,6 +1765,148 @@ def slopes(hm, radius, sigma=0.0):
     return gx, gy
 
 
+LAVA_OCEAN = {'enabled': False, 'crust': 0.55, 'crust_km': 60.0, 'shore': 0.5, 'glow': 0.9}
+EMISSION = {'cracks': 0.0, 'volcanoes': 0.0, 'flows': 0.5, 'rivers': 0.0}
+
+
+def lava_ocean_entry(a):
+    e = copy.deepcopy(LAVA_OCEAN)
+    a = a if isinstance(a, dict) else {}
+    e.update({k: copy.deepcopy(v) for k, v in a.items() if k in LAVA_OCEAN})
+    e['enabled'] = bool(e['enabled'])
+    for k in ('crust', 'crust_km', 'shore', 'glow'):
+        try:
+            e[k] = float(e[k])
+        except (TypeError, ValueError):
+            e[k] = float(LAVA_OCEAN[k])
+    e['crust'] = max(0.0, min(1.0, e['crust']))
+    e['shore'] = max(0.0, min(1.0, e['shore']))
+    e['crust_km'] = max(1.0, e['crust_km'])
+    e['glow'] = max(0.0, min(2.0, e['glow']))
+    return e
+
+
+def emission_entry(a):
+    e = copy.deepcopy(EMISSION)
+    a = a if isinstance(a, dict) else {}
+    e.update({k: copy.deepcopy(v) for k, v in a.items() if k in EMISSION})
+    for k in EMISSION:
+        try:
+            e[k] = max(0.0, min(2.0 if k != 'flows' else 1.0, float(e[k])))
+        except (TypeError, ValueError):
+            e[k] = float(EMISSION[k])
+    return e
+
+
+def has_lava_ocean(P):
+    return bool(P['shape']['ocean']) and bool((P.get('lava_ocean') or {}).get('enabled'))
+
+
+def lava_rivers(P):
+    return float((P.get('emission') or {}).get('rivers', 0)) > 0 and float((P.get('water') or {}).get('rivers', 0)) > 0
+
+
+def volcano_glow(P):
+    return float((P.get('emission') or {}).get('volcanoes', 0)) > 0
+
+
+def has_emission(P):
+    em = P.get('emission') or {}
+    return (has_lava(P) or has_lava_ocean(P) or float(em.get('cracks', 0)) > 0 or float(em.get('volcanoes', 0)) > 0
+            or lava_rivers(P))
+
+
+def mk_channels(P):
+    return 10 if (has_lava(P) or volcano_glow(P)) else 5
+
+
+def lava_ocean_noise(P, X, Y, Z, fmax):
+    O = lava_ocean_entry(P.get('lava_ocean'))
+    Rk = float(P['radius']) / 1000.0
+    sd = int(P['seed']) * 1000 + 911
+    f = Rk / O['crust_km']
+    jg = np.float32(0.4 / f)
+    wf = min(1.3 * f, fmax)
+    Xw = X + jg * fbm(X, Y, Z, wf, fmax, sd + 1, 0.55, 4)
+    Yw = Y + jg * fbm(X, Y, Z, wf, fmax, sd + 2, 0.55, 4)
+    Zw = Z + jg * fbm(X, Y, Z, wf, fmax, sd + 3, 0.55, 4)
+    F1, F2 = worley(Xw, Yw, Zw, f, sd + 5)
+    cov = fbm(X, Y, Z, 1.4, min(8.0, fmax), sd + 7, 0.5, 3)
+    return (F2 - F1).astype(np.float32), cov.astype(np.float32)
+
+
+def lava_ocean_parts(P, hm, lo):
+    O = lava_ocean_entry(P.get('lava_ocean'))
+    e, cov = lo
+    t = np.float32(0.62 - 0.55 * O['crust'])
+    crust = ss(np.float32(0.05), np.float32(0.16), e) * ss(t - np.float32(0.12), t + np.float32(0.12), cov * np.float32(0.5) + np.float32(0.5))
+    crust = crust * np.float32(min(1.0, O['crust'] * 2.5))
+    sea = ss(np.float32(-8), np.float32(8), -hm)
+    sh = np.float32(40 + 460 * O['shore'])
+    shore = (1 - ss(np.float32(0), sh, hm)) * (hm >= 0) * np.float32(O['shore'] > 0)
+    return sea, crust, shore
+
+
+def lava_paint(P):
+    L = lava_entry(P.get('lava'))
+    return np.array(L['color'], np.float32), np.array(L['hot_color'], np.float32), np.array(L['crust_color'], np.float32)
+
+
+def glow_colourize(P, col, hm, mk, n2, lo, nj=None):
+    lc, hc, cc = lava_paint(P)
+    E = emission_entry(P.get('emission'))
+    if mk is not None:
+        if E['cracks'] > 0:
+            w = np.clip(mk[4].astype(np.float32) * np.float32(min(1.0, E['cracks'])), 0, 1)
+            col = col + (lc * (1 + np.float32(0.1) * n2)[..., None] - col) * w[..., None]
+        if E['volcanoes'] > 0 and mk.shape[0] > 9:
+            w = np.clip(mk[9].astype(np.float32) * np.float32(min(1.0, E['volcanoes'])), 0, 1)
+            t = (w * np.float32(0.6))[..., None]
+            col = col + (lc * (1 - t) + hc * t - col) * w[..., None]
+        if E['rivers'] > 0:
+            w = np.clip(mk[3].astype(np.float32) * np.float32(min(1.0, E['rivers'] * 1.2)), 0, 1)
+            t = (w * w * np.float32(0.45))[..., None]
+            rc = (lc * (1 - t) + hc * t) * (1 + np.float32(0.1) * n2)[..., None]
+            col = col + (rc - col) * w[..., None]
+    if has_lava_ocean(P) and lo is not None:
+        sea, crust, shore = lava_ocean_parts(P, hm, lo)
+        hot = np.clip(np.float32(0.2) + np.float32(0.25) * n2 + (np.float32(0.25) * nj if nj is not None else 0), 0, 1)[..., None]
+        lava = lc * (1 - hot) + hc * hot
+        surf = lava * (1 - crust[..., None]) + cc * (1 + np.float32(0.15) * n2)[..., None] * crust[..., None]
+        col = col + (surf - col) * sea[..., None]
+        col = col + (lc * np.float32(0.7) - col) * (shore * np.float32(0.45))[..., None]
+    return col
+
+
+def emissive_strip(P, hm, mk, lo):
+    H, W = hm.shape
+    em = np.zeros((H, W, 3), np.float32)
+    lc, hc, cc = lava_paint(P)
+    E = emission_entry(P.get('emission'))
+    gl = lava_entry(P.get('lava'))['glow']
+    if mk is not None and mk.shape[0] > 5 and has_lava(P):
+        L = lava_entry(P.get('lava'))
+        lv, halo, heat, hot, lcol = lava_colours(L, mk)
+        w = lv * (np.float32(0.4) + np.float32(0.45) * np.clip(heat + hot, 0, 1)) + halo * np.float32(L['edge_glow'] * 0.3)
+        em += lcol * (w * np.float32(gl))[..., None]
+    if mk is not None and E['cracks'] > 0:
+        em += lc * (mk[4].astype(np.float32) * np.float32(0.8 * E['cracks']))[..., None]
+    if mk is not None and E['volcanoes'] > 0 and mk.shape[0] > 9:
+        w = mk[9].astype(np.float32)
+        t = (w * np.float32(0.6))[..., None]
+        em += (lc * (1 - t) + hc * t) * (w * np.float32(0.85 * E['volcanoes']))[..., None]
+    if mk is not None and E['rivers'] > 0:
+        w = np.clip(mk[3].astype(np.float32), 0, 1)
+        t = (w * w * np.float32(0.45))[..., None]
+        em += (lc * (1 - t) + hc * t) * (w * np.float32(0.75 * E['rivers']))[..., None]
+    if has_lava_ocean(P) and lo is not None:
+        O = lava_ocean_entry(P.get('lava_ocean'))
+        sea, crust, shore = lava_ocean_parts(P, hm, lo)
+        w = sea * (1 - np.float32(0.88) * crust) * np.float32(0.5) + shore * np.float32(0.2)
+        em += (lc * np.float32(0.7) + hc * np.float32(0.3)) * (w * np.float32(O['glow']))[..., None]
+    return np.clip(em + 0.5, 0, 255).astype(np.uint8)
+
+
 def colour_noise(P, X, Y, Z, fmax):
     sd = int(P['seed'])
     ps = max(float(P['colors']['patch_size']), 0.1)
@@ -1241,12 +1914,15 @@ def colour_noise(P, X, Y, Z, fmax):
     n2 = fbm(X, Y, Z, 7.0 / ps, fmax, sd + 103, 0.5, 4)
     n3 = fbm(X, Y, Z, 1.6, fmax, sd + 107, 0.55, 5)
     nj = fbm(X, Y, Z, 9.0, fmax, sd + 109, 0.5, 3)
-    return n1, n2, n3, nj
+    lo = lava_ocean_noise(P, X, Y, Z, fmax) if has_lava_ocean(P) else None
+    return n1, n2, n3, nj, lo
 
 
 def colourize(P, hm, gx, gy, mk, lat, noise):
     C = P['colors']
-    n1, n2, n3, nj = noise
+    n1, n2, n3, nj = noise[:4]
+    lo = noise[4] if len(noise) > 4 else None
+    lava_sea = has_lava_ocean(P)
     hj = hm + np.float32(float(C['jitter']) * 1.6) * nj
     hs = np.array([s[0] for s in C['stops']], np.float32)
     cs = np.array([s[1] for s in C['stops']], np.float32)
@@ -1318,7 +1994,7 @@ def colourize(P, hm, gx, gy, mk, lat, noise):
         else:
             ec = np.array(C['ejecta_color'], np.float32)[None, None]
             col += (ec - col) * (np.clip(ej * np.float32(1.25), 0, 1))[..., None]
-    if ocean:
+    if ocean and not lava_sea:
         d = np.maximum(-hm, 0)
         wd = max(float(C['water_depth']), 1.0)
         a = (1 - np.exp(-d / np.float32(wd)))[..., None]
@@ -1340,8 +2016,14 @@ def colourize(P, hm, gx, gy, mk, lat, noise):
     if ocean:
         sn = sn * (hm > 0)
     ice = np.maximum(ice, sn)
+    if lava_sea:
+        ice = ice * ss(np.float32(0), np.float32(150), hm)
     icec = np.array(C['ice'], np.float32)[None, None] * (1 + np.float32(0.06) * n2 + np.float32(0.04) * nj)[..., None]
     col += (icec - col) * ice[..., None]
+    if mk is not None and mk.shape[0] > 5 and has_lava(P):
+        col = lava_colourize(P, col, mk, n2)
+    if has_emission(P):
+        col = glow_colourize(P, col, hm, mk, n2, lo, nj)
     br, ct, sa = float(C['brightness']), float(C['contrast']), float(C['saturation'])
     if sa != 1.0:
         g = (col[..., 0] * np.float32(0.3) + col[..., 1] * np.float32(0.59) + col[..., 2] * np.float32(0.11))[..., None]
@@ -1384,9 +2066,12 @@ def make_height(P, W, T=None, CR=None, cancel=None, progress=None, workers=None)
     VL = volcano_list(P)
     feats = P.get('features') or []
     levels = plateau_levels(P, T) if any(f['type'] == 'plateau' for f in feats) else None
+    LV = lava_setup(P)
+    RG = ridge_setup(P)
+    VOLCANO_FLOWS[0] = float(emission_entry(P.get('emission'))['flows'])
     hm = np.zeros((H, W), np.float32)
-    need = CR is not None or VL is not None or feats or NET is not None or CK is not None
-    mk = np.zeros((5, H, W), np.float16) if need else None
+    need = CR is not None or VL is not None or feats or NET is not None or CK is not None or LV is not None
+    mk = np.zeros((mk_channels(P), H, W), np.float16) if need else None
     fm = fmax_for(W)
 
     def job(r0, r1):
@@ -1394,6 +2079,8 @@ def make_height(P, W, T=None, CR=None, cancel=None, progress=None, workers=None)
             cancel()
         X, Y, Z = rows_xyz(W, H, r0, r1)
         hm[r0:r1] = T.metres(X, Y, Z, fm, T.low_rows(W, H, r0, r1))
+        if RG is not None:
+            apply_ridge(RG, hm[r0:r1], X, Y, Z, W, fm)
         sub = None if mk is None else mk[:, r0:r1]
         if CR is not None:
             apply_craters(P, CR, hm[r0:r1], sub, X, Y, Z, W, H, r0, cancel)
@@ -1405,6 +2092,8 @@ def make_height(P, W, T=None, CR=None, cancel=None, progress=None, workers=None)
             apply_rivers(P, NET, hm[r0:r1], sub, X, Y, Z, W, H, r0, cancel)
         if CK is not None:
             apply_cracks(P, CK, hm[r0:r1], sub, X, Y, Z, W, H, r0, fm)
+        if LV is not None:
+            apply_lava(P, LV, hm[r0:r1], sub, X, Y, Z, W, H, r0, fm)
     run_strips(job, strips(H, W), workers, progress)
     return hm, mk
 
@@ -1416,22 +2105,27 @@ def make_colour(P, hm, mk, W, cancel=None, progress=None, workers=None, noise_ca
         wet = hm < 0
         gx = np.where(wet, 0, gx); gy = np.where(wet, 0, gy)
     col = np.zeros((H, W, 3), np.uint8)
+    em = np.zeros((H, W, 3), np.uint8) if has_emission(P) else None
     fm = fmax_for(W)
     lat = row_lat(H, 0, H)
+    lok = json.dumps(lava_ocean_entry(P.get('lava_ocean')) if has_lava_ocean(P) else None, sort_keys=True)
 
     def job(r0, r1):
         if cancel:
             cancel()
-        key = (W, r0, r1, int(P['seed']), float(P['colors']['patch_size']))
+        key = (W, r0, r1, int(P['seed']), float(P['colors']['patch_size']), lok, float(P['radius']))
         nz = noise_cache.get(key) if noise_cache is not None else None
         if nz is None:
             X, Y, Z = rows_xyz(W, H, r0, r1)
             nz = colour_noise(P, X, Y, Z, fm)
             if noise_cache is not None:
                 noise_cache[key] = nz
-        col[r0:r1] = colourize(P, hm[r0:r1], gx[r0:r1], gy[r0:r1], None if mk is None else mk[:, r0:r1], lat[r0:r1], nz)
+        sub = None if mk is None else mk[:, r0:r1]
+        col[r0:r1] = colourize(P, hm[r0:r1], gx[r0:r1], gy[r0:r1], sub, lat[r0:r1], nz)
+        if em is not None:
+            em[r0:r1] = emissive_strip(P, hm[r0:r1], sub, nz[4] if len(nz) > 4 else None)
     run_strips(job, strips(H, W), workers, progress)
-    return col, gx, gy
+    return col, gx, gy, em
 
 
 def normal_rgba(hm, radius, strength, ocean, flip=True):
@@ -1458,7 +2152,7 @@ def shade_map(gx, gy, strength, light=(-0.55, 0.55, 0.63)):
     return np.clip(d / L[2], 0.2, 1.7)
 
 
-def render_globe(col, gx, gy, S, tilt, vlat, vlon, strength, light=None, ocean=None):
+def render_globe(col, gx, gy, S, tilt, vlat, vlon, strength, light=None, ocean=None, emis=None):
     H, W = col.shape[:2]
     yy, xx = np.mgrid[0:S, 0:S].astype(np.float32)
     u = (xx + 0.5) / S * 2 - 1
@@ -1507,6 +2201,10 @@ def render_globe(col, gx, gy, S, tilt, vlat, vlon, strength, light=None, ocean=N
         spec = np.clip(u * hv[0] + v * hv[1] + z * hv[2], 0, 1) ** 60 * 0.35
         out = out + wet * spec[..., None]
     out = out * (1 - 0.18 * np.exp(-z * 4))[..., None]
+    if emis is not None:
+        e = emis.astype(np.float32)
+        ee = (e[y0, x0] * (1 - tx) + e[y0, x1] * tx) * (1 - ty) + (e[y1, x0] * (1 - tx) + e[y1, x1] * tx) * ty
+        out = out + ee / np.float32(255) * np.float32(0.7)
     o = np.zeros((S, S, 3), np.float32)
     o[m] = out[m]
     return Image.fromarray((np.clip(o, 0, 1) * 255 + 0.5).astype(np.uint8))
@@ -1518,8 +2216,8 @@ ATMO_POINT_KEYS = ('altitude', 'skyExposure', 'skyAlpha', 'skyExtinctionTint', '
                    'postProcessAlpha', 'postProcessDepth', 'extinctionTint')
 ATMO_VALUES = ('atmosphereStartRadiusScale', 'HR', 'HM', 'm_betaR', 'BETA_MSca', 'm_mieG', 'ozoneAbsorption', 'ozoneHeight',
                'ozoneFalloff', 'useOzone', 'averageGroundReflectance', 'multipleScattering', 'godrayStrength')
-ATMO_EXTRA = [['flattenScaledSpaceMesh', '0'], ['rimBlend', '20'], ['rimpower', '600'], ['specR', '0'], ['specG', '0'],
-              ['specB', '0'], ['shininess', '0'], ['noonSunlightExtinctionStrength', '1'], ['cloudColorMultiplier', '1'],
+ATMO_EXTRA = [['flattenScaledSpaceMesh', '0'], ['rimBlend', '20'], ['rimpower', '600'], ['specR', '40'], ['specG', '40'],
+              ['specB', '40'], ['shininess', '50'], ['noonSunlightExtinctionStrength', '1'], ['cloudColorMultiplier', '1'],
               ['cloudScatteringMultiplier', '0.2'], ['cloudSkyIrradianceMultiplier', '0'], ['volumetricsColorMultiplier', '1'],
               ['EVEIntegration_preserveCloudColors', 'False'], ['adjustScaledTexture', 'False'], ['scaledLandBrightnessAdjust', '1'],
               ['scaledLandContrastAdjust', '1'], ['scaledLandSaturationAdjust', '1'], ['scaledOceanBrightnessAdjust', '1'],
@@ -1621,8 +2319,26 @@ def atmo_entry(a):
         e['view'] = 'planet'
     if not isinstance(e['extra'], list):
         e['extra'] = copy.deepcopy(ATMO_EXTRA)
-    e['extra'] = [[str(k), str(v)] for k, v in e['extra'] if str(k) not in ATMO_VALUES and str(k) not in ('name', 'configPoints')]
+    e['extra'] = atmo_fix_extra([[str(k), str(v)] for k, v in e['extra'] if str(k) not in ATMO_VALUES and str(k) not in ('name', 'configPoints')])
     return e
+
+
+def atmo_fix_extra(extra):
+    def num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+    d = dict(ATMO_EXTRA)
+    have = {k for k, v in extra}
+    out = [list(x) for x in extra] + [list(x) for x in ATMO_EXTRA if x[0] not in have]
+    cur = dict(out)
+    bad = set()
+    if num(cur.get('shininess')) <= 0:
+        bad.add('shininess')
+    if all(num(cur.get(k)) <= 0 for k in ('specR', 'specG', 'specB')):
+        bad.update(('specR', 'specG', 'specB'))
+    return [[k, d[k] if k in bad else v] for k, v in out]
 
 
 def has_atmo(P):
@@ -1921,7 +2637,96 @@ def sphere_ground(tex, gx, gy, k, x, y, z, tilt, vlat, vlon, L):
     return c * nd[:, None]
 
 
-def render_atmo(P, tex, gx=None, gy=None, view=None, w=560, h=360, rot=(0.0, 0.0), steps=16, chunk=60000, cancel=None, bg=None):
+def sphere_lookup(img, x, y, z, tilt, vlat, vlon):
+    H, W = img.shape[:2]
+    t = np.radians(tilt); cu, su = np.float32(np.cos(t)), np.float32(np.sin(t))
+    u2 = x * cu - y * su; v2 = x * su + y * cu
+    a = np.radians(vlat); cl, sl = np.float32(np.cos(a)), np.float32(np.sin(a))
+    y3 = v2 * cl + z * sl; z3 = -v2 * sl + z * cl
+    lat = np.arcsin(np.clip(y3, -1, 1)); dlon = np.arctan2(u2, z3)
+    fx = ((dlon + np.float32(np.radians(vlon))) / np.float32(2 * np.pi)) % 1 * W - 0.5
+    fy = np.clip((0.5 - lat / np.pi) * H - 0.5, 0, H - 1.001)
+    x0 = np.floor(fx).astype(np.int32); y0 = fy.astype(np.int32)
+    ax = (fx - x0).astype(np.float32); ay = (fy - y0).astype(np.float32)
+    x0 %= W; x1 = (x0 + 1) % W; y1 = np.minimum(y0 + 1, H - 1)
+    if img.ndim == 3:
+        ax = ax[:, None]; ay = ay[:, None]
+    return (img[y0, x0] * (1 - ax) + img[y0, x1] * ax) * (1 - ay) + (img[y1, x0] * (1 - ax) + img[y1, x1] * ax) * ay
+
+
+def ingame_clouds(P, W=1024, cancel=None, workers=None):
+    if not has_clouds(P):
+        return None
+    cov, typ = cloud_maps(P, W, cancel=cancel, workers=workers)
+    if not cov:
+        return None
+    A = np.zeros((W // 2, W), np.float32)
+    for n, u in cov.items():
+        if n.startswith('sys') and n != 'sys0':
+            continue
+        a = u.astype(np.float32) / 255
+        if n == 'cirrus':
+            a = a * np.float32(0.5)
+        elif n != 'fair':
+            a = a * np.float32(0.85)
+        else:
+            a = np.clip(a ** np.float32(1.1) * np.float32(0.92), 0, 1)
+        A = 1 - (1 - A) * (1 - a)
+    return A
+
+
+def ingame_glow(P, em=None, W=1024, cancel=None):
+    g = None
+    if em is not None:
+        e8 = np.asarray(em, np.uint8)
+        if e8.shape[1] != W:
+            e8 = np.asarray(Image.fromarray(e8).resize((W, W // 2), Image.BILINEAR))
+        g = e8.astype(np.float32) / 255 * np.float32(0.7)
+    if has_aurora(P):
+        e = aurora_entry(P.get('aurora'))
+        low, top = aurora_maps(P, W, cancel=cancel)
+        nl = max(1, e['layers'] - e['top_layers']); nt = e['top_layers']
+        ol = 1 - (1 - min(1.0, e['opacity'] / 255.0)) ** min(nl, 3)
+        ot = (1 - (1 - min(1.0, e['opacity'] * (0.5 + 0.5 * e['fade']) / 255.0)) ** min(nt, 3)) * 0.6 if nt else 0.0
+        a = low[..., :3] * low[..., 3:4] * np.float32(ol) + top[..., :3] * top[..., 3:4] * np.float32(ot)
+        g = a if g is None else g + a
+    return g
+
+
+def render_ingame(P, tex, gx=None, gy=None, view=None, w=560, h=360, rot=(0.0, 0.0), steps=16, cancel=None, bg=None, clouds=None, glow=None):
+    if has_atmo(P):
+        return render_atmo(P, tex, gx, gy, view, w, h, rot, steps, cancel=cancel, bg=bg, clouds=clouds, glow=glow)
+    e = atmo_e(P)
+    pv = P.get('preview', {'tilt': 0, 'view_lat': 0, 'view_lon': 0})
+    vlat = max(-90.0, min(90.0, float(pv.get('view_lat', 0)) + rot[1])); vlon = float(pv.get('view_lon', 0)) + rot[0]
+    col = tex.astype(np.float32) * (255 if tex.dtype != np.uint8 and tex.max() <= 1.0 else 1)
+    if clouds is not None:
+        A = clouds
+        if A.shape != col.shape[:2]:
+            A = np.asarray(Image.fromarray(A.astype(np.float32), 'F').resize((col.shape[1], col.shape[0]), Image.BILINEAR), np.float32)
+        col = col * (1 - A[..., None]) + np.float32(242) * A[..., None]
+        if gx is not None:
+            gx = gx * (1 - A); gy = gy * (1 - A)
+    em = None
+    if glow is not None:
+        G = glow
+        if G.shape[:2] != col.shape[:2]:
+            G = np.asarray(Image.fromarray((np.clip(G, 0, 1) * 255).astype(np.uint8)).resize((col.shape[1], col.shape[0]), Image.BILINEAR), np.float32) / 255
+        em = np.clip(G * 255 / 0.7, 0, 255)
+    S = max(40, min(w, h) - 8)
+    if gx is None:
+        gx = np.zeros(col.shape[:2], np.float32); gy = gx
+    g = render_globe(col, gx, gy, S, float(pv.get('tilt', 0)), vlat, vlon, float(P.get('normal_strength', 0.0)),
+                     light=[float(v) for v in atmo_light(e)], emis=em)
+    out = Image.new('RGB', (w, h), tuple(bg) if bg is not None else (0, 0, 0))
+    yy, xx = np.mgrid[0:S, 0:S]
+    rr = np.sqrt(((xx + 0.5) / S * 2 - 1) ** 2 + ((yy + 0.5) / S * 2 - 1) ** 2)
+    mask = Image.fromarray((np.clip((1 - rr) * S / 2 + 0.5, 0, 1) * 255).astype(np.uint8), 'L')
+    out.paste(g, ((w - S) // 2, (h - S) // 2), mask)
+    return out
+
+
+def render_atmo(P, tex, gx=None, gy=None, view=None, w=560, h=360, rot=(0.0, 0.0), steps=16, chunk=60000, cancel=None, bg=None, clouds=None, glow=None):
     e = atmo_e(P)
     m = atmo_model(e)
     view = view or e['view']
@@ -1951,13 +2756,20 @@ def render_atmo(P, tex, gx=None, gy=None, view=None, w=560, h=360, rot=(0.0, 0.0
         s1 = -zg
         Lin, Tv = m.march(uu, vv, s0, s1, L, steps, True, cancel)
         C = np.clip(sphere_ground(tex, gx, gy, k, uu, vv, zg, tilt, vlat, vlon, L), 0, 1)
+        nd0 = np.clip(uu * L[0] + vv * L[1] + zg * L[2], 0, 1)
+        if clouds is not None:
+            A = sphere_lookup(clouds, uu, vv, zg, tilt, vlat, vlon)[:, None]
+            C = C * (1 - A) + A * (np.float32(0.95) * nd0 ** np.float32(0.8))[:, None]
         E = Tv
         avg = E.mean(1, keepdims=True)
         E = np.float32(pt['extinctionTint']) * E + np.float32(1 - pt['extinctionTint']) * avg
         E = np.maximum(0, np.float32(1 - pt['extinctionThickness']) + np.float32(pt['extinctionThickness']) * E)
         S = scatterer_hdr(Lin * sun, pt['scatteringExposure'])
         CE = C * E
-        flat[idx] += (CE + S * (1 - CE)) * covf[idx][:, None]
+        px_ = CE + S * (1 - CE)
+        if glow is not None:
+            px_ = px_ + sphere_lookup(glow, uu, vv, zg, tilt, vlat, vlon) * (1 - np.float32(0.75) * nd0)[:, None]
+        flat[idx] += px_ * covf[idx][:, None]
     for c0 in range(0, len(si), chunk):
         idx = si[c0:c0 + chunk]
         bb = np.maximum(bf[idx], np.float32(max(1.0, m.Rg) + 1e-6))
@@ -2023,6 +2835,7 @@ def atmo_planets(P, name=None):
            t + 'loadDistance = 300000000', t + 'unloadDistance = 500000000', t + 'hasOcean = False',
            t + 'flatScaledSpaceModel = ' + cfg_val(bool(e['flat_model'])),
            t + 'usesCloudIntegration = ' + cfg_val(bool(e['cloud_integration'])),
+           t + 'cloudIntegrationUsesScattererSunColors = False',
            t + 'mainSunCelestialBody = ' + (str(e['sun']).strip() or 'Sun')]
     if list(e['sun_color']) != [255, 255, 255]:
         out.append(t + 'sunColor = %s,1' % cfg_vec([round(c / 255.0, 3) for c in e['sun_color']]))
@@ -2242,6 +3055,798 @@ def atmo_texture(col, hm, P, size=2048):
     return col.astype(np.float32) / 255, gx.astype(np.float32), gy.astype(np.float32)
 
 
+AURORA = {'enabled': False, 'seed': 1, 'north': True, 'south': True,
+          'north_tilt': 8.0, 'north_lon': 40.0, 'south_tilt': 10.0, 'south_lon': 215.0,
+          'oval': 17.0, 'wobble': 7.0, 'polar_gap': 0.0,
+          'curtains': 4, 'spread': 1.0, 'width': 1.5, 'patchy': 0.5, 'rays': 0.65, 'glow': 0.16, 'brightness': 0.9,
+          'color': [41, 255, 107], 'edge_color': [242, 97, 217], 'core_color': [140, 255, 204],
+          'top_color': [230, 56, 128], 'top_edge_color': [128, 71, 255], 'top_core_color': [255, 128, 191],
+          'layers': 7, 'top_layers': 3, 'altitude': 17000.0, 'spacing': 2500.0, 'opacity': 130, 'fade': 0.42,
+          'speed': 12.0, 'size': 4096}
+AURORA_COLOURS = ('color', 'edge_color', 'core_color', 'top_color', 'top_edge_color', 'top_core_color')
+AURORA_SIZES = (1024, 2048, 4096, 8192)
+AURORA_CURTAINS = ((0.0, 0.37, 0.68, 1.0), (4.8, 0.42, 0.76, 0.8), (-3.4, 0.46, 0.8, 0.6), (8.5, 0.5, 0.84, 0.5),
+                   (-6.8, 0.52, 0.86, 0.42), (12.0, 0.55, 0.88, 0.36))
+AURORA_COVERAGE = 'StockVolumetricClouds/Clouds/Textures/PluginData/Kerbin/base/coverage'
+AURORA_UVNOISE = 'StockVolumetricClouds/Clouds/Textures/PluginData/uvnoise1'
+
+
+def aurora_entry(a):
+    e = copy.deepcopy(AURORA)
+    a = a if isinstance(a, dict) else {}
+    for k, v in a.items():
+        if k in AURORA:
+            e[k] = copy.deepcopy(v)
+    for k in ('enabled', 'north', 'south'):
+        e[k] = bool(e[k])
+    for k in ('north_tilt', 'north_lon', 'south_tilt', 'south_lon', 'oval', 'wobble', 'polar_gap', 'spread', 'width',
+              'patchy', 'rays', 'glow', 'brightness', 'altitude', 'spacing', 'fade', 'speed'):
+        try:
+            e[k] = float(e[k])
+        except (TypeError, ValueError):
+            e[k] = float(AURORA[k])
+    for k in ('seed', 'curtains', 'layers', 'top_layers', 'opacity', 'size'):
+        try:
+            e[k] = int(round(float(e[k])))
+        except (TypeError, ValueError):
+            e[k] = int(AURORA[k])
+    for k in AURORA_COLOURS:
+        try:
+            e[k] = [int(max(0, min(255, round(float(c))))) for c in e[k]][:3]
+            if len(e[k]) != 3:
+                raise ValueError
+        except (TypeError, ValueError):
+            e[k] = list(AURORA[k])
+    e['curtains'] = max(1, min(len(AURORA_CURTAINS), e['curtains']))
+    e['layers'] = max(1, min(16, e['layers']))
+    e['top_layers'] = max(0, min(e['layers'], e['top_layers']))
+    e['opacity'] = max(0, min(255, e['opacity']))
+    e['fade'] = max(0.0, min(1.0, e['fade']))
+    e['oval'] = max(1.0, min(60.0, e['oval']))
+    e['wobble'] = max(0.0, e['wobble'])
+    e['polar_gap'] = max(0.0, e['polar_gap'])
+    e['spread'] = max(0.1, e['spread'])
+    e['width'] = max(0.1, e['width'])
+    for k in ('patchy', 'rays'):
+        e[k] = max(0.0, min(1.0, e[k]))
+    e['glow'] = max(0.0, e['glow'])
+    e['brightness'] = max(0.0, min(1.0, e['brightness']))
+    e['spacing'] = max(0.0, e['spacing'])
+    e['seed'] = max(1, e['seed'])
+    if e['size'] not in AURORA_SIZES:
+        e['size'] = min(AURORA_SIZES, key=lambda s: abs(s - e['size']))
+    return e
+
+
+def has_aurora(P):
+    e = (P.get('aurora') or {})
+    return bool(e.get('enabled')) and bool(e.get('north', True) or e.get('south', True))
+
+
+class AuroraNoise:
+    N = 64
+
+    def __init__(self, seed):
+        rng = np.random.default_rng(4116 + int(seed))
+        self.tabs = [rng.random((self.N, self.N, self.N), dtype=np.float32) for _ in range(8)]
+
+    def vn(self, x, y, z, t):
+        T = self.tabs[t]; N = self.N
+        xi = np.floor(x).astype(np.int32); yi = np.floor(y).astype(np.int32); zi = np.floor(z).astype(np.int32)
+        fx = (x - xi).astype(np.float32); fy = (y - yi).astype(np.float32); fz = (z - zi).astype(np.float32)
+        fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy); fz = fz * fz * (3 - 2 * fz)
+        x0 = xi % N; y0 = yi % N; z0 = zi % N; x1 = (x0 + 1) % N; y1 = (y0 + 1) % N; z1 = (z0 + 1) % N
+        c00 = T[x0, y0, z0] * (1 - fx) + T[x1, y0, z0] * fx
+        c10 = T[x0, y1, z0] * (1 - fx) + T[x1, y1, z0] * fx
+        c01 = T[x0, y0, z1] * (1 - fx) + T[x1, y0, z1] * fx
+        c11 = T[x0, y1, z1] * (1 - fx) + T[x1, y1, z1] * fx
+        return (c00 * (1 - fy) + c10 * fy) * (1 - fz) + (c01 * (1 - fy) + c11 * fy) * fz
+
+    def fbm(self, x, y, z, t, o=4):
+        s = 0; a = 1.0; n = 0.0
+        for i in range(o):
+            s = s + a * self.vn(x * 2 ** i + 17.3 * i, y * 2 ** i + 5.1 * i, z * 2 ** i + 9.7 * i, (t + i) % 8)
+            n += a; a *= 0.5
+        return (s / n) * 2 - 1
+
+
+def aurora_ss(a, b, x):
+    t = np.clip((x - a) / (b - a), 0, 1)
+    return t * t * (3 - 2 * t)
+
+
+def aurora_axis(e, sgn):
+    key = 'north' if sgn > 0 else 'south'
+    t = np.radians(e[key + '_tilt']); l = np.radians(e[key + '_lon'])
+    return np.array([np.sin(t) * np.cos(l), np.sin(t) * np.sin(l), np.cos(t)]) * sgn
+
+
+def aurora_reach(e):
+    offs = [c[0] for c in AURORA_CURTAINS[:e['curtains']]]
+    th = e['oval'] + e['wobble'] + 3.0 + 3.6 + 1.1 + max(offs) * e['spread'] + 4 * e['width'] * 1.6 + 8.0
+    return th + max(e['north_tilt'], e['south_tilt'])
+
+
+def aurora_hemi(e, nz, px, py, pz, sgn):
+    m = aurora_axis(e, sgn)
+    e1 = np.cross(m, [0.3, 0.9, 0.1]); e1 /= np.linalg.norm(e1); e2 = np.cross(m, e1)
+    cm = px * m[0] + py * m[1] + pz * m[2]
+    th = np.degrees(np.arccos(np.clip(cm, -1, 1))).astype(np.float32)
+    cx = px * e1[0] + py * e1[1] + pz * e1[2]; cy = px * e2[0] + py * e2[1] + pz * e2[2]
+    r = np.sqrt(cx * cx + cy * cy) + 1e-6; cx = (cx / r).astype(np.float32); cy = (cy / r).astype(np.float32)
+    s = float((3 if sgn > 0 else 71) + 13 * (e['seed'] - 1))
+    fb = nz.fbm
+    th0 = e['oval'] + e['wobble'] * fb(cx * 1.3 + s, cy * 1.3, s * 0.7, 0, 3) + 3.0 * cx
+    thw = th + 3.6 * fb(px * 5 + s, py * 5, pz * 5, 1, 4) + 1.1 * fb(px * 13, py * 13 + s, pz * 13, 2, 3)
+    rays = 0.5 + 0.5 * fb(cx * 16 + s, cy * 16, th * 0.05, 3, 2)
+    rays = (1 - e['rays']) + e['rays'] * aurora_ss(0.25, 0.8, rays)
+    rays = rays * (0.75 + 0.25 * (0.5 + 0.5 * fb(cx * 38, cy * 38 + s, th * 0.08, 4, 2)))
+    I = np.zeros_like(th); Cv = np.zeros_like(th)
+    gd = (e['patchy'] - 0.5) * 0.5
+    for k, (off, g0, g1, amp) in enumerate(AURORA_CURTAINS[:e['curtains']]):
+        thk = th0 + off * e['spread'] + 2.4 * fb(cx * 2.6 + k * 7.1 + s, cy * 2.6, k * 3.3, 5, 3)
+        w = e['width'] * (1 + 0.6 * fb(cx * 3.1 + s, cy * 3.1 + k * 2.2, 1.7, 6, 2))
+        gate = aurora_ss(g0 + gd, g1 + gd, 0.5 + 0.5 * fb(cx * 1.9 + k * 11.3, cy * 1.9 + s, k * 1.9, 7, 3))
+        d = thw - thk
+        prof = np.where(d > 0, np.exp(-(d / w) ** 2), np.exp(-(np.abs(d) / (1.7 * w)) ** 1.6))
+        a = amp * gate * prof
+        I += a; Cv += a * np.clip(-d / (2.6 * w), 0, 1)
+    patch = 0.5 + 0.5 * fb(px * 3 + s, py * 3, pz * 3, 2, 3)
+    I = I * rays + e['glow'] * np.exp(-((thw - th0 - 1) / 8) ** 2) * aurora_ss(0.3, 0.7, patch)
+    if e['polar_gap'] > 0:
+        I = I * aurora_ss(e['polar_gap'] / 3.0, e['polar_gap'], th)
+    v = Cv / np.maximum(I, 1e-4)
+    return I.astype(np.float32), np.clip(v, 0, 1).astype(np.float32)
+
+
+def aurora_maps(P, W=None, cancel=None):
+    e = aurora_entry(P.get('aurora'))
+    W = int(W or e['size']); H = W // 2
+    nz = AuroraNoise(e['seed'])
+    low = np.zeros((H, W, 4), np.float32); top = np.zeros((H, W, 4), np.float32)
+    cl = [np.array(e[k], np.float32) / 255 for k in AURORA_COLOURS]
+    low[..., :3] = cl[0]; top[..., :3] = cl[3]
+    reach = min(90.0, aurora_reach(e))
+    lon = ((np.arange(W) + 0.5) / W * 2 * np.pi).astype(np.float32)
+    CH = max(8, min(256, (1 << 21) // W))
+    for sgn, on in ((1, e['north']), (-1, e['south'])):
+        if not on:
+            continue
+        rows = np.arange(0, H // 2) if sgn > 0 else np.arange(H // 2, H)
+        lat_all = (np.pi / 2 - (rows + 0.5) / H * np.pi).astype(np.float32)
+        keep = rows[np.abs(np.degrees(lat_all)) >= 90.0 - reach]
+        for c0 in range(0, len(keep), CH):
+            if cancel:
+                cancel()
+            rr = keep[c0:c0 + CH]
+            lat = (np.pi / 2 - (rr + 0.5) / H * np.pi).astype(np.float32)
+            la, lo = np.meshgrid(lat, lon, indexing='ij')
+            px = np.cos(la) * np.cos(lo); py = np.cos(la) * np.sin(lo); pz = np.sin(la)
+            I, v = aurora_hemi(e, nz, px, py, pz, sgn)
+            a0 = (np.clip(I, 0, 1.25) / 1.25) ** 0.85 * (1 - 0.2 * aurora_ss(0.2, 1.0, v))
+            core = aurora_ss(0.55, 1.0, 0.9 * a0)[..., None] * 0.45
+            vv = aurora_ss(0.05, 1.0, v)[..., None] * 0.85
+            a = np.clip(e['brightness'] * a0, 0, 1)
+            for out, (g, pu, cy) in ((low, cl[0:3]), (top, cl[3:6])):
+                col = g * (1 - vv) + pu * vv
+                out[rr, :, :3] = col * (1 - core) + cy * core
+                out[rr, :, 3] = a
+    return low, top
+
+
+def aurora_u8(m):
+    return (np.clip(m, 0, 1) * 255 + 0.5).astype(np.uint8)
+
+
+def aurora_layers(e):
+    n = e['layers']
+    out = []
+    for i in range(n):
+        f = i / float(n - 1) if n > 1 else 0.0
+        alt = e['altitude'] + e['spacing'] * i
+        a = int(round(e['opacity'] * (1 - (1 - e['fade']) * f)))
+        out.append((i, alt, a, i >= n - e['top_layers']))
+    return out
+
+
+def aurora_cfg(P, name, tex_low, tex_top):
+    e = aurora_entry(P.get('aurora'))
+    t = '\t'
+    def g(v):
+        return ('%.6g' % v)
+    L = ['EVE_CLOUDS', '{']
+    for i, alt, a, is_top in aurora_layers(e):
+        lo = alt - 500; hi = alt + 500
+        L += [t + 'OBJECT', t + '{',
+              t * 2 + 'name = %s-aurora-%d' % (name, i),
+              t * 2 + 'body = ' + name,
+              t * 2 + 'altitude = ' + g(alt),
+              t * 2 + 'detailSpeed = 0,25,0',
+              t * 2 + 'speed = 0,%s,0' % g(e['speed']),
+              t * 2 + 'speedMode = LinearSurface',
+              t * 2 + 'settings', t * 2 + '{',
+              t * 3 + '_UVNoiseTex = ' + AURORA_UVNOISE,
+              t * 3 + '_UVNoiseStrength = 0.0012',
+              t * 3 + '_Color = 255,255,255,%d' % a,
+              t * 3 + '_MainTex', t * 3 + '{',
+              t * 4 + 'value = ' + (tex_top if is_top else tex_low),
+              t * 4 + 'isClamped = True',
+              t * 3 + '}', t * 2 + '}',
+              t * 2 + 'layer2D', t * 2 + '{',
+              t * 3 + 'macroCloudMaterial', t * 3 + '{',
+              t * 4 + '_DetailDist = 2E-06',
+              t * 4 + '_MinLight = 1',
+              t * 3 + '}', t * 2 + '}',
+              t * 2 + 'layerRaymarchedVolumeV5', t * 2 + '{',
+              t * 3 + 'scaledFadeStartAltitude = -2000',
+              t * 3 + 'scaledFadeEndAltitude = -1000',
+              t * 3 + 'coverageMap', t * 3 + '{',
+              t * 4 + 'value = ' + AURORA_COVERAGE,
+              t * 4 + 'type = AlphaMap',
+              t * 4 + 'alphaMask = ALPHAMAP_R',
+              t * 3 + '}',
+              t * 3 + 'raymarchingSettings', t * 3 + '{',
+              t * 4 + 'adaptiveStepSizeFactor = 0',
+              t * 4 + 'baseStepSize = 90000000',
+              t * 4 + 'maxStepSize = 90000000',
+              t * 4 + 'lightMarchDistance = 0',
+              t * 4 + 'lightMarchSteps = 0',
+              t * 4 + 'fxOnlyLayer = True',
+              t * 3 + '}',
+              t * 3 + 'cloudTypes', t * 3 + '{',
+              t * 4 + 'Item', t * 4 + '{',
+              t * 5 + 'typeName = AuroraEmpty',
+              t * 5 + 'minAltitude = ' + g(lo),
+              t * 5 + 'maxAltitude = ' + g(hi),
+              t * 5 + 'interpolateCloudHeights = false',
+              t * 5 + 'baseNoiseTiling = 0',
+              t * 5 + 'density = 0.0',
+              t * 5 + 'lightningFrequency = 0.0',
+              t * 5 + 'coverageCurve', t * 5 + '{', t * 6 + 'key = 0 0', t * 5 + '}',
+              t * 5 + 'densityCurve', t * 5 + '{', t * 5 + '}',
+              t * 4 + '}', t * 3 + '}',
+              t * 3 + 'noise', t * 3 + '{', t * 3 + '}',
+              t * 3 + 'lightVolumeSettings', t * 3 + '{', t * 4 + 'useLightVolume = False', t * 3 + '}',
+              t * 3 + 'phaseFunctions', t * 3 + '{', t * 3 + '}',
+              t * 2 + '}', t + '}']
+    L.append('}')
+    return '\n'.join(L) + '\n'
+
+
+def aurora_composite(e, low, top, bg):
+    o = bg.astype(np.float32)
+    al = low[..., 3:4]; at = top[..., 3:4]
+    nl = max(1, e['layers'] - e['top_layers']); nt = e['top_layers']
+    ol = 1 - (1 - min(1.0, e['opacity'] / 255.0)) ** min(nl, 3)
+    ot = (1 - (1 - min(1.0, e['opacity'] * (0.5 + 0.5 * e['fade']) / 255.0)) ** min(nt, 3)) * 0.6 if nt else 0.0
+    o = o * (1 - al * ol) + low[..., :3] * al * ol
+    o = o * (1 - at * ot) + top[..., :3] * at * ot
+    return o
+
+
+def aurora_preview(P, low, top, bg=None, S=420):
+    e = aurora_entry(P.get('aurora'))
+    H, W = low.shape[:2]
+    offs = [c[0] for c in AURORA_CURTAINS[:e['curtains']]]
+    reach = min(89.0, e['oval'] + e['wobble'] + max(offs) * e['spread'] + 3 * e['width'] + max(e['north_tilt'], e['south_tilt']) + 6)
+    yy, xx = np.mgrid[0:S, 0:S]
+    X = (xx - S / 2 + 0.5) / (S / 2); Y = (yy - S / 2 + 0.5) / (S / 2); R = np.sqrt(X * X + Y * Y)
+    if bg is not None:
+        bgf = np.asarray(Image.fromarray(np.asarray(bg, np.uint8)).resize((W, H), Image.BILINEAR), np.float32) / 255 * 0.08
+    else:
+        bgf = np.zeros((H, W, 3), np.float32) + np.array([0.02, 0.03, 0.06], np.float32)
+    panels = []
+    for sgn in (1, -1):
+        col = np.radians(R * reach)
+        lo = (np.arctan2(Y, X) * sgn) % (2 * np.pi)
+        fy = (col / np.pi if sgn > 0 else 1 - col / np.pi) * H
+        py_ = np.clip(fy, 0, H - 1).astype(int); px_ = np.clip(lo / (2 * np.pi) * W, 0, W - 1).astype(int)
+        o = aurora_composite(e, low[py_, px_], top[py_, px_], bgf[py_, px_])
+        edge = np.clip((1 - R) * S / 2, 0, 1)[..., None]
+        o = o * edge + np.array([13, 15, 20], np.float32) / 255 * (1 - edge)
+        panels.append(o)
+    gap = np.zeros((S, 24, 3), np.float32) + np.array([13, 15, 20], np.float32) / 255
+    pv = np.concatenate([panels[0], gap, panels[1]], 1)
+    return Image.fromarray(aurora_u8(pv))
+
+
+def save_aurora(m, path, fmt, flip=True):
+    u = aurora_u8(m)
+    if path.lower().endswith('.dds'):
+        if flip:
+            u = np.ascontiguousarray(u[::-1])
+        save_mips(Image.fromarray(u, 'RGBA'), path, 'DXT5')
+    else:
+        Image.fromarray(u, 'RGBA').save(path, 'PNG')
+
+
+CLOUDS = {'enabled': False, 'seed': 1, 'size': 4096,
+          'swirl': 1.0, 'swirl_size': 1.0, 'wind': 1.0, 'bands': 3, 'streaks': 0.7, 'breakup': 0.5,
+          'fair': 0.45, 'speckle': 0.5, 'systems': 3, 'system_cover': 0.5, 'fair_pct': 35.0, 'system_pct': 30.0, 'cirrus_pct': 15.0,
+          'duration': 16.0, 'repeat': 30.0, 'fade': 5.0,
+          'cirrus': 0.5, 'base': 6500.0, 'height': 1.0, 'cirrus_altitude': 14300.0,
+          'speed': 29.89, 'brightness': 512, 'color': [120, 120, 120]}
+CLOUD_SIZES = (2048, 4096, 8192, 16384)
+CLOUD_TOPS = (1700, 2700, 3700, 4700, 5700, 5700)
+CLOUD_MW = 1024
+CLOUD_STEPS = 24
+CLOUD_NB = 6
+_CFLOW = {}
+
+
+def cloud_entry(a):
+    e = copy.deepcopy(CLOUDS)
+    a = a if isinstance(a, dict) else {}
+    for k, v in a.items():
+        if k in CLOUDS:
+            e[k] = copy.deepcopy(v)
+    e['enabled'] = bool(e['enabled'])
+    for k in ('swirl', 'swirl_size', 'wind', 'streaks', 'breakup', 'fair', 'speckle', 'system_cover', 'fair_pct', 'system_pct', 'cirrus_pct', 'duration', 'repeat',
+              'fade', 'cirrus', 'base', 'height', 'cirrus_altitude', 'speed'):
+        try:
+            e[k] = float(e[k])
+        except (TypeError, ValueError):
+            e[k] = float(CLOUDS[k])
+    for k in ('seed', 'size', 'bands', 'systems', 'brightness'):
+        try:
+            e[k] = int(round(float(e[k])))
+        except (TypeError, ValueError):
+            e[k] = int(CLOUDS[k])
+    try:
+        e['color'] = [int(max(0, min(255, round(float(c))))) for c in e['color']][:3]
+        if len(e['color']) != 3:
+            raise ValueError
+    except (TypeError, ValueError):
+        e['color'] = list(CLOUDS['color'])
+    e['seed'] = max(1, e['seed'])
+    if e['size'] not in CLOUD_SIZES:
+        e['size'] = min(CLOUD_SIZES, key=lambda s: abs(s - e['size']))
+    e['swirl'] = max(0.0, min(3.0, e['swirl']))
+    e['swirl_size'] = max(0.25, min(4.0, e['swirl_size']))
+    e['wind'] = max(0.0, min(3.0, e['wind']))
+    e['bands'] = max(1, min(8, e['bands']))
+    for k in ('streaks', 'breakup', 'fair', 'speckle', 'system_cover', 'cirrus'):
+        e[k] = max(0.0, min(1.0, e[k]))
+    e['systems'] = max(0, min(4, e['systems']))
+    for k in ('fair_pct', 'system_pct', 'cirrus_pct'):
+        e[k] = max(0.0, min(100.0, e[k]))
+    e['repeat'] = max(1.0, e['repeat'])
+    e['duration'] = max(0.5, min(e['repeat'], e['duration']))
+    e['fade'] = max(0.0, min(e['duration'] / 2.0, e['fade']))
+    e['base'] = max(0.0, e['base'])
+    e['height'] = max(0.2, min(4.0, e['height']))
+    e['cirrus_altitude'] = max(e['base'] + 500.0, e['cirrus_altitude'])
+    e['brightness'] = max(1, min(2000, e['brightness']))
+    return e
+
+
+def has_clouds(P):
+    return bool((P.get('clouds') or {}).get('enabled'))
+
+
+def cloud_layers(e):
+    out = [('fair', 'fair', None)] if e['fair_pct'] > 0 else []
+    if e['system_pct'] > 0:
+        for k in range(e['systems']):
+            off = e['repeat'] * k / max(1, e['systems'])
+            out.append(('sys%d' % k, 'system-%d' % k, round(off, 2)))
+    if e['cirrus_pct'] > 0:
+        out.append(('cirrus', 'cirrus', None))
+    return out
+
+
+def sphere_rows(W, H, r0, r1):
+    lat = (math.pi / 2 - (np.arange(r0, r1, dtype=np.float64) + 0.5) / H * math.pi)
+    lon = (np.arange(W, dtype=np.float64) + 0.5) / W * 2 * math.pi
+    la, lo = np.meshgrid(lat, lon, indexing='ij')
+    return (np.cos(la) * np.cos(lo)).astype(np.float32), (np.cos(la) * np.sin(lo)).astype(np.float32), np.sin(la).astype(np.float32)
+
+
+def grid_sample(G, x, y, z):
+    C, H, W = G.shape
+    lon = np.arctan2(y, x)
+    lon = np.where(lon < 0, lon + np.float32(2 * math.pi), lon)
+    fx = lon * np.float32(W / (2 * math.pi)) - np.float32(0.5)
+    fy = (np.float32(math.pi / 2) - np.arcsin(np.clip(z, -1, 1))) * np.float32(H / math.pi) - np.float32(0.5)
+    fy = np.clip(fy, 0, H - 1.001)
+    x0 = np.floor(fx).astype(np.int32); y0 = fy.astype(np.int32)
+    tx = (fx - x0).astype(np.float32); ty = (fy - y0).astype(np.float32)
+    x0 %= W; x1 = (x0 + 1) % W; y1 = np.minimum(y0 + 1, H - 1)
+    out = []
+    for g in G:
+        a = g[y0, x0] * (1 - tx) + g[y0, x1] * tx
+        b = g[y1, x0] * (1 - tx) + g[y1, x1] * tx
+        out.append(a * (1 - ty) + b * ty)
+    return out
+
+
+def cloud_velocity(e, X, Y, Z):
+    sd = e['seed'] * 1000 + 701
+    f0 = 1.3 / e['swirl_size']
+
+    def psi(x, y, z):
+        return fbm(x, y, z, f0, f0 * 5, sd, 0.5, 3) + np.float32(0.2) * fbm(x, y, z, f0 * 2.5, f0 * 8, sd + 1, 0.5, 1)
+    h = np.float32(0.004)
+    gx = (psi(X + h, Y, Z) - psi(X - h, Y, Z)) / (2 * h)
+    gy = (psi(X, Y + h, Z) - psi(X, Y - h, Z)) / (2 * h)
+    gz = (psi(X, Y, Z + h) - psi(X, Y, Z - h)) / (2 * h)
+    k = np.float32(e['swirl'] * 0.35 / f0)
+    vx = (Y * gz - Z * gy) * k; vy = (Z * gx - X * gz) * k; vz = (X * gy - Y * gx) * k
+    lat = np.arcsin(np.clip(Z, -1, 1))
+    zon = np.float32(e['wind'] * 0.35) * np.cos(lat * np.float32(e['bands'])) * (1 + np.float32(0.25) * fbm(X, Y, Z, 1.1, 3, sd + 5, 0.5, 2))
+    vx = vx - Y * zon; vy = vy + X * zon
+    return np.stack([vx, vy, vz]).astype(np.float32)
+
+
+def cloud_flow(e, cancel=None, progress=None, workers=None):
+    key = json.dumps([e[k] for k in ('seed', 'swirl', 'swirl_size', 'wind', 'bands')])
+    got = _CFLOW.get(key)
+    if got is not None:
+        return got
+    VW = 512
+    vX, vY, vZ = sphere_rows(VW, VW // 2, 0, VW // 2)
+    V = cloud_velocity(e, vX, vY, vZ)
+    MW = CLOUD_MW; MH = MW // 2
+    sd = e['seed'] * 1000 + 733
+    nb = CLOUD_NB
+    P6 = np.zeros((6, MH, MW), np.float32)
+    BL = np.zeros((nb, MH // 2, MW // 2), np.float32)
+    MID = np.zeros((MH, MW), np.float32)
+    dt = np.float32(0.016)
+    samples = [s for s in range(CLOUD_STEPS) if s % 4 == 3]
+    wts = [0.5 + 0.5 * math.sin(math.pi * (s + 1) / (CLOUD_STEPS + 1)) for s in samples]
+    wsum = np.float32(sum(wts))
+
+    def job(r0, r1):
+        x, y, z = sphere_rows(MW, MH, r0, r1)
+        bacc = [np.zeros(((r1 - r0) // 2, MW // 2), np.float32) for _ in range(nb)]
+        macc = np.zeros(x.shape, np.float32)
+        for s in range(CLOUD_STEPS):
+            if cancel:
+                cancel()
+            vx, vy, vz = grid_sample(V, x, y, z)
+            mx = x - dt * 0.5 * vx; my = y - dt * 0.5 * vy; mz = z - dt * 0.5 * vz
+            vx, vy, vz = grid_sample(V, mx, my, mz)
+            x = x - dt * vx; y = y - dt * vy; z = z - dt * vz
+            n = np.sqrt(x * x + y * y + z * z); x /= n; y /= n; z /= n
+            if s in samples:
+                w = np.float32(wts[samples.index(s)])
+                xs, ys, zs = x[::2, ::2], y[::2, ::2], z[::2, ::2]
+                for i in range(nb):
+                    bacc[i] += w * fbm(xs, ys, zs, 2.3, 7.0, sd + 11 * i, 0.5, 3)
+                macc += w * fbm(x, y, z, 11.0, 24.0, sd + 97, 0.5, 2)
+        vx, vy, vz = grid_sample(V, x, y, z)
+        P6[:, r0:r1] = np.stack([x, y, z, vx, vy, vz])
+        for i in range(nb):
+            BL[i, r0 // 2:r1 // 2] = bacc[i] / wsum
+        MID[r0:r1] = macc / wsum
+    rows = [(r, min(MH, r + 32)) for r in range(0, MH, 32)]
+    run_strips(job, rows, workers, progress)
+    fields = []
+    for i in range(nb):
+        b = BL[i]
+        b = (b - b.mean()) / max(float(b.std()), 1e-6)
+        bp = np.concatenate([b[:, -1:], b, b[:, :1]], 1)
+        up = np.asarray(Image.fromarray(bp.astype(np.float32), 'F').resize(((MW // 2 + 2) * 2, MH), Image.BILINEAR), np.float32)
+        fields.append(up[:, 2:2 + MW])
+    fields.append(((MID - MID.mean()) / max(float(MID.std()), 1e-6)).astype(np.float32))
+    G = np.concatenate([P6, np.stack(fields)]).astype(np.float32)
+    if len(_CFLOW) > 3:
+        _CFLOW.clear()
+    _CFLOW[key] = G
+    return G
+
+
+def cloud_fib_stats(e, W, G):
+    rng = np.random.default_rng(e['seed'] + 4)
+    q = rng.normal(size=(3, 6000)).astype(np.float32)
+    q /= np.linalg.norm(q, axis=0)
+    f = cloud_fib(e, W, G, q[0], q[1], q[2])
+    return float(f.mean()), max(float(f.std()), 1e-6)
+
+
+def cloud_fib(e, W, G, X, Y, Z):
+    S = grid_sample(G, X, Y, Z)
+    ax, ay, az, vx, vy, vz = S[:6]
+    n = np.sqrt(ax * ax + ay * ay + az * az) + np.float32(1e-9)
+    ax /= n; ay /= n; az /= n
+    vm = np.sqrt(vx * vx + vy * vy + vz * vz) + np.float32(1e-6)
+    px = np.float32(2 * math.pi / W)
+    hstep = np.float32(1.6) * px / vm * np.float32(0.5 + e['streaks'])
+    ff = W / 36.0
+    sd = e['seed'] * 1000 + 761
+    acc = np.zeros(X.shape, np.float32)
+    K = 4
+    for k in range(-K, K + 1):
+        t = np.float32(k) * hstep
+        acc += fbm(ax + t * vx, ay + t * vy, az + t * vz, ff, ff * 2.2, sd, 0.5, 2)
+    return acc / np.float32(2 * K + 1)
+
+
+def cloud_strip(e, W, G, fst, r0, r1, only=None):
+    want = set(only) if only is not None else set(n for n, _, _ in cloud_layers(e))
+    H = W // 2
+    X, Y, Z = sphere_rows(W, H, r0, r1)
+    S = grid_sample(G, X, Y, Z)
+    ax, ay, az = S[0], S[1], S[2]
+    n = np.sqrt(ax * ax + ay * ay + az * az) + np.float32(1e-9)
+    ax = ax / n; ay = ay / n; az = az / n
+    nb = CLOUD_NB
+    bands = S[6:6 + nb]
+    mid = S[6 + nb]
+    fib = (cloud_fib(e, W, G, X, Y, Z) - np.float32(fst[0])) / np.float32(fst[1])
+    sd = e['seed'] * 1000 + 787
+    fs = W / 4096.0
+    fine = 0.5 + 0.5 * fbm(ax, ay, az, 60 * fs, 140 * fs, sd + 1, 0.55, 3)
+    iso = 0.5 + 0.5 * fbm(ax, ay, az, 5.0, 14.0, sd + 2, 0.5, 3)
+    m = np.clip(0.5 + 0.28 * mid, 0, 1)
+    f = np.clip(0.5 + 0.26 * fib, 0, 1)
+    out = {}
+    st = np.float32(e['streaks'])
+    c = np.float32((0.45 - e['fair']) * 1.4)
+    band = bands[0]
+    if 'fair' not in want:
+        band = None
+    mask = ss(-0.24 + c, 0.48 + c, band) if band is not None else None
+    if band is not None:
+        halo = ss(-0.70 + c, 0.12 + c, band)
+        brk = ss(0.28, 0.60, iso) * np.float32(e['breakup']) + np.float32(1 - e['breakup'])
+        body = mask * (0.32 + 0.68 * ss(0.26, 0.64, m)) * (0.45 + 0.55 * brk)
+        veil = (halo - halo * mask) * ss(0.48, 0.80, m) * 0.75
+        cov = (body + veil) * ((1 - st) * np.float32(0.7) + st * (0.14 + 1.12 * f))
+        cov = cov * (0.66 + 0.68 * fine)
+        g = np.float32(max(0.0, float(e['fair']) - 1.0))
+        cov = ss(np.float32(0.12) - np.float32(0.12) * g, np.float32(0.90) - np.float32(0.45) * g, cov + np.float32(0.3) * g * mask)
+        if e['speckle'] > 0:
+            dots = fbm(ax, ay, az, W / 10.0, W / 5.0, sd + 3, 0.5, 2)
+            zone = halo * (1 - mask * np.float32(0.7)) * ss(0.35, 0.65, iso)
+            sp = ss(0.32, 0.5, dots) * zone * np.float32(e['speckle'])
+            cov = np.maximum(cov, sp)
+        core = ss(0.8 - c, 1.6 - c, band) * ss(0.45, 0.8, m)
+        typ = np.clip(0.18 * ss(0.30, 0.92, cov) + 0.3 * core * ss(0.55, 0.95, cov), 0, 1)
+        out['fair'] = (cov, typ)
+    for k in range(e['systems']):
+        if 'sys%d' % k not in want:
+            continue
+        b = bands[2 + k]
+        t = np.float32((0.5 - e['system_cover']) * 1.6 + 0.35)
+        mk_ = ss(t - 0.45, t + 0.25, b)
+        body = mk_ * (0.55 + 0.45 * ss(0.26, 0.7, m))
+        cv = body * ((1 - st) * np.float32(0.8) + st * (0.3 + 1.0 * f)) * (0.75 + 0.5 * fine)
+        cv = ss(0.10, 0.80, cv)
+        core = ss(t + 0.3, t + 1.2, b) * ss(0.4, 0.8, m)
+        ty = np.clip(0.25 * ss(0.3, 0.9, cv) + 0.75 * core * ss(0.5, 0.95, cv), 0, 1)
+        out['sys%d' % k] = (cv, ty)
+    if 'cirrus' in want:
+        b = bands[1]
+        cc = np.float32((0.5 - e['cirrus']) * 1.4)
+        mask = ss(0.02 + cc, 0.92 + cc, b)
+        fc = np.clip(0.5 + 0.22 * fib, 0, 1)
+        g = np.float32(max(0.0, float(e['cirrus']) - 1.0))
+        hair = ss(np.float32(0.30) - np.float32(0.3) * g, np.float32(1.00) - np.float32(0.5) * g, fc) ** 1.25
+        cv = mask * hair * (0.35 + 0.65 * ss(0.25, 0.75, m)) * (0.50 + 0.50 * ss(0.22, 0.62, iso)) * (0.85 + 0.3 * fine)
+        out['cirrus'] = (np.clip(cv * 1.45, 0, 1), None)
+    return out
+
+
+CLOUD_PCT_W = 192
+_CPCT = {}
+
+
+def cloud_cover_frac(u, thr=0.1):
+    H = u.shape[0]
+    w = np.cos(np.pi / 2 - (np.arange(H) + 0.5) / H * np.pi)
+    return float(((u > thr).mean(1) * w).sum() / w.sum())
+
+
+def cloud_measure(e, G, keys):
+    W = CLOUD_PCT_W
+    st = cloud_fib_stats(e, W, G)
+    res = cloud_strip(e, W, G, st, 0, W // 2, keys)
+    return {k: cloud_cover_frac(res[k][0]) for k in keys if k in res}
+
+
+CLOUD_SHAPE = ('seed', 'swirl', 'swirl_size', 'wind', 'bands', 'streaks', 'breakup', 'speckle', 'systems')
+
+
+def cloud_solve(e, G, param, keys, target, lo, hi):
+    key = json.dumps([[e[k] for k in CLOUD_SHAPE], param, target])
+    got = _CPCT.get(key)
+    if got is not None:
+        return got
+    q = dict(e)
+    for _ in range(10):
+        mid = 0.5 * (lo + hi)
+        q[param] = mid
+        m = cloud_measure(q, G, keys)
+        f = sum(m.values()) / max(1, len(m))
+        if f < target:
+            lo = mid
+        else:
+            hi = mid
+    v = round(0.5 * (lo + hi), 4)
+    if len(_CPCT) > 64:
+        _CPCT.clear()
+    _CPCT[key] = v
+    return v
+
+
+def cloud_resolve(e, G):
+    e = dict(e)
+    if e['fair_pct'] > 0:
+        e['fair'] = cloud_solve(e, G, 'fair', ['fair'], e['fair_pct'] / 100.0, -1.6, 2.4)
+    if e['system_pct'] > 0 and e['systems'] > 0:
+        e['system_cover'] = cloud_solve(e, G, 'system_cover', ['sys%d' % k for k in range(e['systems'])], e['system_pct'] / 100.0, -1.6, 2.2)
+    if e['cirrus_pct'] > 0:
+        e['cirrus'] = cloud_solve(e, G, 'cirrus', ['cirrus'], e['cirrus_pct'] / 100.0, -1.6, 2.4)
+    return e
+
+
+def cloud_report(P, cancel=None):
+    e = cloud_entry(P.get('clouds'))
+    G = cloud_flow(e, cancel)
+    e = cloud_resolve(e, G)
+    names = [n for n, _, _ in cloud_layers(e)]
+    m = cloud_measure(e, G, names)
+    return e, m
+
+
+def cloud_total(cov):
+    keys = [k for k in ('fair', 'sys0', 'cirrus') if k in cov]
+    if not keys:
+        return 0.0
+    u = np.maximum.reduce([cov[k] for k in keys]).astype(np.float32) / 255
+    return cloud_cover_frac(u)
+
+
+def cloud_maps(P, W=None, cancel=None, progress=None, workers=None):
+    e = cloud_entry(P.get('clouds'))
+    W = int(W or e['size']); H = W // 2
+    fkey = json.dumps([e[k] for k in ('seed', 'swirl', 'swirl_size', 'wind', 'bands')])
+    fresh = fkey not in _CFLOW
+    fw = 0.6 if fresh else 0.0
+    G = cloud_flow(e, cancel, (lambda i, n: progress('wind', fw * i / n)) if progress else None, workers)
+    mp = (lambda i, n: progress('clouds', fw + (1 - fw) * i / n)) if progress else None
+    e = cloud_resolve(e, G)
+    fst = cloud_fib_stats(e, W, G)
+    names = [n for n, _, _ in cloud_layers(e)]
+    cov = {n: np.zeros((H, W), np.uint8) for n in names}
+    typ = {n: np.zeros((H, W), np.uint8) for n in names if n != 'cirrus'}
+
+    def job(r0, r1):
+        if cancel:
+            cancel()
+        res = cloud_strip(e, W, G, fst, r0, r1)
+        for n in names:
+            c, t = res[n]
+            cov[n][r0:r1] = (np.clip(c, 0, 1) * 255 + 0.5).astype(np.uint8)
+            if t is not None:
+                typ[n][r0:r1] = (np.clip(t, 0, 1) * 255 + 0.5).astype(np.uint8)
+    run_strips(job, strips(H, W, 1 << 18), workers, mp)
+    return cov, typ
+
+
+def half_u8(u):
+    return ((u[0::2, 0::2].astype(np.uint16) + u[0::2, 1::2] + u[1::2, 0::2] + u[1::2, 1::2] + 2) // 4).astype(np.uint8)
+
+
+def save_bc4_dds(u, path, flip=True):
+    a = np.ascontiguousarray(u[::-1] if flip else u)
+    H, W = a.shape
+    blocks = bc4_encode(a).tobytes()
+    hd = bytearray(128)
+    hd[0:4] = b'DDS '
+    struct.pack_into('<7I', hd, 4, 124, 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000 | 0x80000, H, W, len(blocks), 1, 1)
+    struct.pack_into('<2I', hd, 76, 32, 0x4)
+    hd[84:88] = b'BC4U'
+    struct.pack_into('<I', hd, 108, 0x1000)
+    with open(path, 'wb') as f:
+        f.write(bytes(hd) + blocks)
+
+
+def save_cloud_scaled(u, path, flip=True, gamma=1.15, gain=0.88):
+    a = (np.clip((u.astype(np.float32) / 255) ** np.float32(gamma) * np.float32(gain), 0, 1) * 255 + 0.5).astype(np.uint8)
+    if flip:
+        a = a[::-1]
+    rgba = np.full(a.shape + (4,), 255, np.uint8)
+    rgba[..., 3] = a
+    save_mips(Image.fromarray(rgba, 'RGBA'), path, 'DXT5')
+
+
+def cloud_files(folder, base, e):
+    out = {}
+    for n, _, _ in cloud_layers(e):
+        out[n] = {'coverage': os.path.join(folder, '%s_%s_coverage.dds' % (base, n)),
+                  'scaled': os.path.join(folder, '%s_%s_scaled.dds' % (base, n))}
+        if n != 'cirrus':
+            out[n]['type'] = os.path.join(folder, '%s_%s_type.dds' % (base, n))
+    out['cfg'] = os.path.join(folder, base + '_clouds.cfg')
+    return out
+
+
+def cloud_cfg(P, name, texbase):
+    from string import Template
+    e = cloud_entry(P.get('clouds'))
+    r, g, b = e['color']
+    tops = [int(round(e['base'] + t * e['height'])) for t in CLOUD_TOPS]
+    out = ['EVE_CLOUDS', '{']
+    for n, label, off in cloud_layers(e):
+        tex = lambda k: '%s_%s_%s' % (texbase, n, k)
+        common = dict(name='%s-%s' % (name, label), body=name, speed=('%.6g' % e['speed']), r=r, g=g, b=b,
+                      scaled=tex('scaled'), coverage=tex('coverage'))
+        if n == 'cirrus':
+            txt = Template(CLOUD_TPL_CIRRUS).substitute(common, altitude='%d' % round(e['cirrus_altitude']),
+                                                        bright=int(round(e['brightness'] * 400 / 512.0)), alpha=300,
+                                                        cmin='%d' % round(e['base']),
+                                                        cmax='%d' % round(e['cirrus_altitude'] + 1500))
+        else:
+            d = dict(common, altitude='%d' % round(e['base'] + 400), bright=e['brightness'], typemap=tex('type'),
+                     order=3 if n == 'fair' else 0, base='%d' % round(e['base']))
+            d.update({'top%d' % i: '%d' % t for i, t in enumerate(tops)})
+            txt = Template(CLOUD_TPL_LAYER).substitute(d)
+            if off is not None:
+                ts = ['\t\ttimeSettings', '\t\t{', '\t\t\tunit = Hours', '\t\t\tfadeTime = %.6g' % e['fade'],
+                      '\t\t\tduration = %.6g' % e['duration'], '\t\t\toffset = %.6g' % off,
+                      '\t\t\trepeatInterval = %.6g' % e['repeat'], '\t\t\tfadeMode = Coverage', '\t\t}']
+                lines = txt.rstrip('\n').split('\n')
+                assert lines[-1] == '\t}'
+                txt = '\n'.join(lines[:-1] + ts + ['\t}']) + '\n'
+        out.append(txt.rstrip('\n'))
+    out.append('}')
+    return '\n'.join(out) + '\n'
+
+
+def export_clouds(P, name, base, folder, flip=True, log=print, cfg_path=None, cancel=None):
+    e = cloud_entry(P.get('clouds'))
+    files = cloud_files(folder, base, e)
+    log('making the clouds at %d x %d' % (e['size'], e['size'] // 2))
+    last = [-1]
+
+    def prog(stage, f):
+        p = int(f * 100) // 10 * 10
+        if p != last[0]:
+            last[0] = p
+            log('clouds %d%% (%s)' % (p, 'working out the wind' if stage == 'wind' else 'cloud maps'))
+    cov, typ = cloud_maps(P, cancel=cancel, progress=prog)
+    written = []
+    for n, _, _ in cloud_layers(e):
+        F = files[n]
+        c = cov[n] if n != 'cirrus' else half_u8(cov[n])
+        save_bc4_dds(c, F['coverage'], flip); written.append(F['coverage'])
+        if n != 'cirrus':
+            save_bc4_dds(half_u8(typ[n]), F['type'], flip); written.append(F['type'])
+            save_cloud_scaled(half_u8(cov[n]), F['scaled'], flip)
+        else:
+            save_cloud_scaled(c, F['scaled'], flip, 1.0, 0.5)
+        written.append(F['scaled'])
+        log('cloud layer %s done' % n)
+    del cov, typ
+    with open(files['cfg'], 'w', newline='\n') as f:
+        f.write(cloud_cfg(P, name, tex_path(folder, base, cfg_path)))
+    written.append(files['cfg'])
+    return written
+
+
+def cloud_composite(P, cov, base_rgb):
+    e = cloud_entry(P.get('clouds'))
+    o = base_rgb.astype(np.float32) / 255
+    names = [n for n, _, _ in cloud_layers(e) if n in cov]
+    for n in names:
+        a = cov[n].astype(np.float32) / 255
+        if a.shape != o.shape[:2]:
+            a = np.asarray(Image.fromarray(cov[n]).resize((o.shape[1], o.shape[0]), Image.BILINEAR), np.float32) / 255
+        if n == 'cirrus':
+            a = a * np.float32(0.5)
+        elif n != 'fair':
+            a = a * np.float32(0.85)
+        else:
+            a = np.clip(a ** np.float32(1.1) * np.float32(0.92), 0, 1)
+        o = o * (1 - a[..., None]) + a[..., None]
+    return (np.clip(o, 0, 1) * 255 + 0.5).astype(np.uint8)
+CLOUD_TPL_LAYER = '\tOBJECT\n\t{\n\t\tname = ${name}\n\t\tbody = ${body}\n\t\taltitude = ${altitude}\n\t\tdetailSpeed = 0,6,0\n\t\tspeed = 0,${speed},0\n\t\tspeedMode = LinearSurface\n\t\tsettings\n\t\t{\n\t\t\t_DetailTex = StockVolumetricClouds/Clouds/Textures/PluginData/detail1\n\t\t\t_DetailScale = 30\n\t\t\t_UVNoiseTex = StockVolumetricClouds/Clouds/Textures/PluginData/uvnoise1\n\t\t\t_UVNoiseStrength = 0.00020000001\n\t\t\t_BumpScale = 0.5\n\t\t\t_Lambertian = 0.75\n\t\t\t_Color = ${bright},${bright},${bright},255\n\t\t\t_MainTex\n\t\t\t{\n\t\t\t\tvalue = ${scaled}\n\t\t\t\tisClamped = True\n\t\t\t}\n\t\t\t_FlowMap\n\t\t\t{\n\t\t\t}\n\t\t}\n\t\tlayer2D\n\t\t{\n\t\t\tshadowMaterial\n\t\t\t{\n\t\t\t\t_ShadowFactor = 1\n\t\t\t\t_VolumetricShadowDensity\n\t\t\t\t{\n\t\t\t\t}\n\t\t\t}\n\t\t\tmacroCloudMaterial\n\t\t\t{\n\t\t\t\t_DetailDist = 2E-06\n\t\t\t}\n\t\t}\n\t\tlayerRaymarchedVolumeV5\n\t\t{\n\t\t\tcolor = ${r}, ${g}, ${b}, 255\n\t\t\tupwardsCloudSpeed = 5\n\t\t\tscaledFadeStartAltitude = 200000\n\t\t\tscaledFadeEndAltitude = 260000\n\t\t\tskylightMultiplier = 1.0\n\t\t\tskylightTintMultiplier = 0.7\n\t\t\traymarchingSettings\n\t\t\t{\n\t\t\t\tlightMarchSteps = 4\n\t\t\t\tlightMarchDistance = 1200\n\t\t\t\tbaseStepSize = 75\n\t\t\t\tadaptiveStepSizeFactor = 0.006\n\t\t\t\toverlapRenderOrder = ${order}\n\t\t\t\tmaxStepSize = 1500\n\t\t\t}\n\t\t\tnoise\n\t\t\t{\n\t\t\t\terosionDepth = 0.65\n\t\t\t\tworley\n\t\t\t\t{\n\t\t\t\t\tspherical = 1\n\t\t\t\t\tpersistence = 0.57\n\t\t\t\t}\n\t\t\t}\n\t\t\tcoverageMap\n\t\t\t{\n\t\t\t\tvalue = ${coverage}\n\t\t\t\ttype = AlphaMap\n\t\t\t\talphaMask = ALPHAMAP_R\n\t\t\t}\n\t\t\tcloudTypeMap\n\t\t\t{\n\t\t\t\tvalue = ${typemap}\n\t\t\t\ttype = AlphaMap\n\t\t\t\talphaMask = ALPHAMAP_R\n\t\t\t}\n\t\t\tambientSound\n\t\t\t{\n\t\t\t\tsoundName = StockVolumetricClouds/Clouds/Sounds/WhistlingWindLooped\n\t\t\t}\n\t\t\tdroplets\n\t\t\t{\n\t\t\t\tdropletsConfig = droplets-cloud-Kerbin\n\t\t\t}\n\t\t\tlightVolumeSettings\n\t\t\t{\n\t\t\t}\n\t\t\tphaseFunctions\n\t\t\t{\n\t\t\t\tsingleScattering1 = 0.95, 0.1\n\t\t\t\tsingleScattering2 = 0.8, 0.2\n\t\t\t\tmultipleScattering1 = 0.2, 3.0\n\t\t\t\tmultipleScattering2 = -0.4, 0.3\n\t\t\t}\n\t\t\tcloudTypes\n\t\t\t{\n\t\t\t\tItem\n\t\t\t\t{\n\t\t\t\t\ttypeName = Stratus\n\t\t\t\t\tminAltitude = ${base}\n\t\t\t\t\tmaxAltitude = ${top0}\n\t\t\t\t\tinterpolateCloudHeights = true\n\t\t\t\t\tdensity = 0.0015\n\t\t\t\t\tbaseNoiseTiling = 2300\n\t\t\t\t\tambientVolume = 2\n\t\t\t\t\tdropletsDensity = 0.2\n\t\t\t\t\tnoiseEdgeHardness = 0.9\n\t\t\t\t\tmultipleScatteringBrightness = 0.8\n\t\t\t\t\tcoverageCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0.01728953 -0.004032524 1.633945 1.633945\n\t\t\t\t\t\tkey = 0.1140957 0.8506892 0.06669102 0.261398\n\t\t\t\t\t\tkey = 0.3686106 0.9575245 0 0\n\t\t\t\t\t\tkey = 0.9732781 -0.006797761 -0.369256 -0.5550035\n\t\t\t\t\t}\n\t\t\t\t\tdensityCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0 0 1 1\n\t\t\t\t\t\tkey = 1 1 1 1\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t\tItem\n\t\t\t\t{\n\t\t\t\t\ttypeName = Cumulus\n\t\t\t\t\tminAltitude = ${base}\n\t\t\t\t\tmaxAltitude = ${top1}\n\t\t\t\t\tinterpolateCloudHeights = true\n\t\t\t\t\tdensity = 0.012\n\t\t\t\t\tbaseNoiseTiling = 2300\n\t\t\t\t\tambientVolume = 2\n\t\t\t\t\tdropletsDensity = 0.2\n\t\t\t\t\tnoiseEdgeHardness = 0.97\n\t\t\t\t\tcoverageCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0.01728953 -0.004032524 1.633945 1.633945\n\t\t\t\t\t\tkey = 0.08695792 0.976166 0.06669102 0.04846065\n\t\t\t\t\t\tkey = 0.9732781 -0.006797761 -0.7966601 -0.5550035\n\t\t\t\t\t}\n\t\t\t\t\tdensityCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0 0 1 1\n\t\t\t\t\t\tkey = 1 1 1 1\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t\tItem\n\t\t\t\t{\n\t\t\t\t\ttypeName = Congestus0\n\t\t\t\t\tminAltitude = ${base}\n\t\t\t\t\tmaxAltitude = ${top2}\n\t\t\t\t\tinterpolateCloudHeights = true\n\t\t\t\t\tdensity = 0.012\n\t\t\t\t\tbaseNoiseTiling = 2300\n\t\t\t\t\tambientVolume = 2\n\t\t\t\t\tdropletsDensity = 0.2\n\t\t\t\t\tnoiseEdgeHardness = 0.97\n\t\t\t\t\tcoverageCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0.01728953 -0.004032524 1.633945 1.633945\n\t\t\t\t\t\tkey = 0.08695792 0.976166 0.06669102 0.04846065\n\t\t\t\t\t\tkey = 0.9732781 -0.006797761 -0.7966601 -0.5550035\n\t\t\t\t\t}\n\t\t\t\t\tdensityCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0 0 1 1\n\t\t\t\t\t\tkey = 1 1 1 1\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t\tItem\n\t\t\t\t{\n\t\t\t\t\ttypeName = Congestus 1\n\t\t\t\t\tminAltitude = ${base}\n\t\t\t\t\tmaxAltitude = ${top3}\n\t\t\t\t\tinterpolateCloudHeights = true\n\t\t\t\t\tdensity = 0.012\n\t\t\t\t\tbaseNoiseTiling = 2300\n\t\t\t\t\tambientVolume = 2\n\t\t\t\t\tdropletsDensity = 0.3\n\t\t\t\t\tnoiseEdgeHardness = 0.97\n\t\t\t\t\tcoverageCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0.01728953 -0.004032524 1.633945 1.633945\n\t\t\t\t\t\tkey = 0.08695792 0.976166 0.06669102 0.04846065\n\t\t\t\t\t\tkey = 0.4343985 0.6765829 -1.224023 -1.224023\n\t\t\t\t\t\tkey = 0.8816288 0.3897246 -1.164106 -1.164106\n\t\t\t\t\t\tkey = 0.9732781 -0.006797761 -0.7966601 -0.5550035\n\t\t\t\t\t}\n\t\t\t\t\tdensityCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0 0 1 1\n\t\t\t\t\t\tkey = 1 1 1 1\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t\tItem\n\t\t\t\t{\n\t\t\t\t\ttypeName = Congestus 2\n\t\t\t\t\tminAltitude = ${base}\n\t\t\t\t\tmaxAltitude = ${top4}\n\t\t\t\t\tinterpolateCloudHeights = false\n\t\t\t\t\tdensity = 0.006\n\t\t\t\t\tbaseNoiseTiling = 2300\n\t\t\t\t\tdropletsDensity = 0.3\n\t\t\t\t\tnoiseEdgeHardness = 0.97\n\t\t\t\t\tcoverageCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0.01728953 -0.004032524 1.633945 1.633945\n\t\t\t\t\t\tkey = 0.09431168 0.9640306 0.06669102 -0.8954304\n\t\t\t\t\t\tkey = 0.2904161 0.8003764 0.2357683 0.2357683\n\t\t\t\t\t\tkey = 0.59456 0.7429472 -0.001872113 -0.001872113\n\t\t\t\t\t\tkey = 0.734686 0.7428927 -3.4198 -1.176937\n\t\t\t\t\t\tkey = 0.9732781 -0.006797761 -0.8304251 -0.5550035\n\t\t\t\t\t}\n\t\t\t\t\tdensityCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0 0 1 1\n\t\t\t\t\t\tkey = 1 1 1 1\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t\tItem\n\t\t\t\t{\n\t\t\t\t\ttypeName = Congestus 3\n\t\t\t\t\tminAltitude = ${base}\n\t\t\t\t\tmaxAltitude = ${top5}\n\t\t\t\t\tinterpolateCloudHeights = false\n\t\t\t\t\tdensity = 0.006\n\t\t\t\t\tbaseNoiseTiling = 2300\n\t\t\t\t\tambientVolume = 2\n\t\t\t\t\tdropletsDensity = 0.5\n\t\t\t\t\tnoiseEdgeHardness = 0.97\n\t\t\t\t\tcoverageCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0.01728953 -0.004032524 1.633945 1.633945\n\t\t\t\t\t\tkey = 0.09431168 0.9640306 0.06669102 -0.8954304\n\t\t\t\t\t\tkey = 0.2904161 0.8003764 0.2357683 0.2357683\n\t\t\t\t\t\tkey = 0.734686 0.7428927 -3.4198 -1.176937\n\t\t\t\t\t\tkey = 0.9732781 -0.006797761 -0.8304251 -0.5550035\n\t\t\t\t\t}\n\t\t\t\t\tdensityCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0 0 1 1\n\t\t\t\t\t\tkey = 1 1 1 1\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n'
+CLOUD_TPL_CIRRUS = '\tOBJECT\n\t{\n\t\tname = ${name}\n\t\tbody = ${body}\n\t\taltitude = ${altitude}\n\t\tdetailSpeed = 0,6,0\n\t\tspeed = 0,${speed},0\n\t\tspeedMode = LinearSurface\n\t\tsettings\n\t\t{\n\t\t\t_DetailTex = StockVolumetricClouds/Clouds/Textures/PluginData/detail1\n\t\t\t_DetailScale = 30\n\t\t\t_UVNoiseTex = StockVolumetricClouds/Clouds/Textures/PluginData/uvnoise1\n\t\t\t_UVNoiseStrength = 0.00020000001\n\t\t\t_Color = ${bright},${bright},${bright},${alpha}\n\t\t\t_BumpScale = 0.5\n\t\t\t_Lambertian = 0.75\n\t\t\t_MainTex\n\t\t\t{\n\t\t\t\tvalue = ${scaled}\n\t\t\t\tisClamped = True\n\t\t\t}\n\t\t\t_FlowMap\n\t\t\t{\n\t\t\t}\n\t\t}\n\t\tlayer2D\n\t\t{\n\t\t\tshadowMaterial\n\t\t\t{\n\t\t\t\t_ShadowFactor = 1\n\t\t\t\t_VolumetricShadowDensity\n\t\t\t\t{\n\t\t\t\t}\n\t\t\t}\n\t\t\tmacroCloudMaterial\n\t\t\t{\n\t\t\t\t_DetailDist = 2E-06\n\t\t\t}\n\t\t}\n\t\tlayerRaymarchedVolumeV5\n\t\t{\n\t\t\tcolor = ${r}, ${g}, ${b}, 255\n\t\t\tupwardsCloudSpeed = 5\n\t\t\tscaledFadeStartAltitude = 200000\n\t\t\tscaledFadeEndAltitude = 260000\n\t\t\tskylightMultiplier = 1.0\n\t\t\tskylightTintMultiplier = 0.7\n\t\t\traymarchingSettings\n\t\t\t{\n\t\t\t\tlightMarchSteps = 0\n\t\t\t\tlightMarchDistance = 0\n\t\t\t\tbaseStepSize = 300\n\t\t\t\tadaptiveStepSizeFactor = 0.006\n\t\t\t\toverlapRenderOrder = 7\n\t\t\t\tmaxStepSize = 1500\n\t\t\t}\n\t\t\tnoise\n\t\t\t{\n\t\t\t\terosionDepth = 0.65\n\t\t\t\tworley\n\t\t\t\t{\n\t\t\t\t\tspherical = 1\n\t\t\t\t\tpersistence = 0.57\n\t\t\t\t}\n\t\t\t}\n\t\t\tcoverageMap\n\t\t\t{\n\t\t\t\tvalue = ${coverage}\n\t\t\t\ttype = AlphaMap\n\t\t\t\talphaMask = ALPHAMAP_R\n\t\t\t}\n\t\t\tcloudTypeMap\n\t\t\t{\n\t\t\t\tvalue = ${coverage}\n\t\t\t\ttype = AlphaMap\n\t\t\t\talphaMask = ALPHAMAP_R\n\t\t\t}\n\t\t\tcloudTypes\n\t\t\t{\n\t\t\t\tItem\n\t\t\t\t{\n\t\t\t\t\ttypeName = trail\n\t\t\t\t\tminAltitude = ${cmin}\n\t\t\t\t\tmaxAltitude = ${cmax}\n\t\t\t\t\tinterpolateCloudHeights = true\n\t\t\t\t\tdensity = 0.001\n\t\t\t\t\tbaseNoiseTiling = 50000\n\t\t\t\t\tambientVolume = 2\n\t\t\t\t\tdropletsDensity = 0.2\n\t\t\t\t\tnoiseEdgeHardness = 0.5\n\t\t\t\t\tcoverageCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0.01728953 -0.004032524 1.633945 -0.2416199\n\t\t\t\t\t\tkey = 0.4307672 -0.2456568 0.2357683 0.2357683\n\t\t\t\t\t\tkey = 0.6933722 0.9572497 0.3691055 0.3691055\n\t\t\t\t\t\tkey = 0.8104363 -0.01274869 -0.8304251 -0.5550035\n\t\t\t\t\t}\n\t\t\t\t\tdensityCurve\n\t\t\t\t\t{\n\t\t\t\t\t\tkey = 0 0 1 1\n\t\t\t\t\t\tkey = 1 1 1 1\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t\tambientSound\n\t\t\t{\n\t\t\t\tsoundName = StockVolumetricClouds/Clouds/Sounds/WhistlingWindLooped\n\t\t\t}\n\t\t\tdroplets\n\t\t\t{\n\t\t\t\tdropletsConfig = droplets-cloud-Kerbin\n\t\t\t}\n\t\t\tlightVolumeSettings\n\t\t\t{\n\t\t\t}\n\t\t\tphaseFunctions\n\t\t\t{\n\t\t\t\tsingleScattering1 = 0.95, 0.05\n\t\t\t\tsingleScattering2 = 0.8, 0.15\n\t\t\t\tmultipleScattering1 = 0.2, 2.0\n\t\t\t\tmultipleScattering2 = -0.4, 0.2\n\t\t\t}\n\t\t\tcurlNoise\n\t\t\t{\n\t\t\t\ttiling = 20000\n\t\t\t\tstrength = 10000\n\t\t\t\tcontrast = 0.25\n\t\t\t}\n\t\t}\n\t}\n'
+
+
 def font(size):
     try:
         return ImageFont.load_default(size=size)
@@ -2256,12 +3861,14 @@ def height_grey(hm, lo=None, hi=None):
     return Image.fromarray(np.clip(g * 255 + 0.5, 0, 255).astype(np.uint8))
 
 
-def write_preview(P, col, hm, path):
+def write_preview(P, col, hm, path, em=None):
     H, W = hm.shape
     if W > 4096:
         f = W // 4096
         hm = hm.reshape(H // f, f, W // f, f).mean((1, 3))
         col = np.asarray(Image.fromarray(col).resize((4096, 2048), Image.LANCZOS))
+        if em is not None:
+            em = np.asarray(Image.fromarray(em).resize((4096, 2048), Image.LANCZOS))
         H, W = hm.shape
     gx, gy = slopes(hm, float(P['radius']), 0.5)
     ocean = (hm < 0).astype(np.float32) if P['shape']['ocean'] else None
@@ -2270,15 +3877,21 @@ def write_preview(P, col, hm, path):
     k = float(P['normal_strength'])
     pv = P['preview']
     sheet = Image.new('RGB', (2400, 1200), (13, 15, 20))
+    shf = col.astype(np.float32) * shade_map(gx, gy, k)[..., None]
+    if em is not None:
+        shf = shf + em.astype(np.float32) * np.float32(0.7)
+    sh = np.clip(shf, 0, 255).astype(np.uint8)
     if has_atmo(P):
         t2, gx2, gy2 = atmo_texture(col, hm, P)
         sheet.paste(render_atmo(P, t2, gx2, gy2, view='planet', w=800, h=800, steps=24, bg=(13, 15, 20)), (0, 0))
+    elif has_rings(P):
+        rc, ra = ring_profile(P, 2048)
+        sheet.paste(ring_scene(sh, rc, ra, ring_entry(P['rings']), w=800, h=800), (0, 0))
     else:
-        sheet.paste(render_globe(col, gx, gy, 800, pv['tilt'], pv['view_lat'], pv['view_lon'], k, ocean=ocean), (0, 0))
-    sh = np.clip(col.astype(np.float32) * shade_map(gx, gy, k)[..., None], 0, 255).astype(np.uint8)
+        sheet.paste(render_globe(col, gx, gy, 800, pv['tilt'], pv['view_lat'], pv['view_lon'], k, ocean=ocean, emis=em), (0, 0))
     sheet.paste(Image.fromarray(sh).resize((1600, 800), Image.LANCZOS), (800, 0))
-    sheet.paste(render_globe(col, gx, gy, 400, 0, 72, pv['view_lon'], k, ocean=ocean), (0, 800))
-    sheet.paste(render_globe(col, gx, gy, 400, 0, -72, pv['view_lon'], k, ocean=ocean), (400, 800))
+    sheet.paste(render_globe(col, gx, gy, 400, 0, 72, pv['view_lon'], k, ocean=ocean, emis=em), (0, 800))
+    sheet.paste(render_globe(col, gx, gy, 400, 0, -72, pv['view_lon'], k, ocean=ocean, emis=em), (400, 800))
     sheet.paste(height_grey(hm).resize((800, 400), Image.LANCZOS), (800, 800))
     s = W / 4096.0
     crop = Image.fromarray(sh).crop((int(1650 * s), int(800 * s), int(2450 * s), int(1200 * s))).resize((800, 400), Image.LANCZOS)
@@ -2493,6 +4106,7 @@ PNG16 = 'PNG 16-bit'
 PNG8 = 'PNG 8-bit'
 CFG = 'Kopernicus .cfg'
 ATMO_CFG = 'Scatterer cfg'
+CLOUD_FMT = 'EVE + True Volumetric Clouds'
 DDS_CODEC = {DDS_BC1: 'DXT1', DDS_BC3: 'DXT5', DDS_BC7: 'BC7'}
 EXPORT_FORMATS = {
     'height': [DDS_L8, PNG16, PNG8],
@@ -2502,9 +4116,13 @@ EXPORT_FORMATS = {
     'preview': ['PNG', 'JPG'],
     'config': [CFG],
     'atmo': [ATMO_CFG],
+    'aurora': [DDS_BC3, 'PNG'],
+    'emissive': [DDS_BC1, DDS_BC7, 'PNG'],
+    'clouds': [CLOUD_FMT],
+    'ring': [DDS_BC3, DDS_BC7, 'PNG'],
 }
 FMT_EXT = {DDS_BC1: '.dds', DDS_BC3: '.dds', DDS_BC7: '.dds', DDS_NM: '.dds', DDS_BC5: '.dds', DDS_L8: '.dds',
-           PNG16: '.png', PNG8: '.png', 'PNG': '.png', 'JPG': '.jpg', 'TGA': '.tga', 'BMP': '.bmp', CFG: '.cfg', ATMO_CFG: '.cfg'}
+           PNG16: '.png', PNG8: '.png', 'PNG': '.png', 'JPG': '.jpg', 'TGA': '.tga', 'BMP': '.bmp', CFG: '.cfg', ATMO_CFG: '.cfg', CLOUD_FMT: '_clouds.cfg'}
 PIL_FMT = {'PNG': 'PNG', 'JPG': 'JPEG', 'TGA': 'TGA', 'BMP': 'BMP'}
 
 
@@ -2514,6 +4132,23 @@ def export_target(folder, base, fmt):
 
 def planets_file(folder, name):
     return os.path.join(folder, 'planetsList_%s.cfg' % name)
+
+
+def aurora_files(folder, base, fmt):
+    ext = FMT_EXT[fmt]
+    return (os.path.join(folder, base + ext), os.path.join(folder, base + '_top' + ext), os.path.join(folder, base + '.cfg'))
+
+
+def export_aurora(P, name, base, fmt, folder, flip=True, log=print, cfg_path=None, cancel=None):
+    lp, tp, cp = aurora_files(folder, base, fmt)
+    log('making the aurora at %d x %d' % (aurora_entry(P.get('aurora'))['size'], aurora_entry(P.get('aurora'))['size'] // 2))
+    low, top = aurora_maps(P, cancel=cancel)
+    save_aurora(low, lp, fmt, flip)
+    save_aurora(top, tp, fmt, flip)
+    del low, top
+    with open(cp, 'w', newline='\n') as f:
+        f.write(aurora_cfg(P, name, tex_path(folder, base, cfg_path), tex_path(folder, base + '_top', cfg_path)))
+    return [lp, tp, cp]
 
 
 def resize_height(hm, size):
@@ -2566,6 +4201,14 @@ def kopernicus_snippet(P, info, files, folder, base=None):
                  t * 3 + 'order = 9999993',
                  t * 3 + 'enabled = true',
                  t * 2 + '}']
+    if files.get('emissive'):
+        mods += [t * 2 + 'VertexColorMapEmissive', t * 2 + '{',
+                 t * 3 + 'blendMode = Additive',
+                 t * 3 + 'map = ' + tex_path(folder, files['emissive'], base),
+                 t * 3 + 'brightness = 1',
+                 t * 3 + 'order = 9999994',
+                 t * 3 + 'enabled = true',
+                 t * 2 + '}']
     if mods:
         L += ['PQS', '{', t + 'Mods', t + '{'] + mods + [t + '}', '}']
     if files.get('color') or files.get('normal'):
@@ -2574,13 +4217,31 @@ def kopernicus_snippet(P, info, files, folder, base=None):
             L.append(t * 2 + 'texture = ' + tex_path(folder, files['color'], base))
         if files.get('normal'):
             L.append(t * 2 + 'normals = ' + tex_path(folder, files['normal'], base))
-        L += [t + '}', '}']
-    if P['shape']['ocean']:
+        L += [t + '}']
+        if files.get('emissive'):
+            L += [t + 'VertexColorMapEmissive', t + '{', t * 2 + 'blendMode = Additive',
+                  t * 2 + 'map = ' + tex_path(folder, files['emissive'], base), t * 2 + 'brightness = 1', t + '}']
+        L += ['}']
+    if has_lava_ocean(P):
+        lc, hc, cc = [list(v) for v in lava_paint(P)]
+        dk = [v * 0.55 for v in lc]
+        L += ['Ocean', '{', t + 'ocean = true', t + 'density = 2.6', t + 'oceanColor = ' + col(lc), '',
+              t + 'Material', t + '{', t * 2 + 'color = ' + col(lc), t * 2 + 'colorFromSpace = ' + col(dk), t + '}', '',
+              t + 'Fog', t + '{', t * 2 + 'fogColorStart = ' + col(hc), t * 2 + 'fogColorEnd = ' + col(cc), t + '}']
+        if files.get('emissive'):
+            L += ['', t + 'Mods', t + '{', t * 2 + 'VertexColorMapEmissive', t * 2 + '{', t * 3 + 'blendMode = Additive',
+                  t * 3 + 'map = ' + tex_path(folder, files['emissive'], base), t * 3 + 'brightness = 1',
+                  t * 3 + 'order = 9999994', t * 3 + 'enabled = true', t * 2 + '}', t + '}']
+        L += ['}']
+    elif P['shape']['ocean']:
         C = P['colors']
         L += ['Ocean', '{', t + 'ocean = true', t + 'density = 1', t + 'oceanColor = ' + col(C['deep']), '',
               t + 'Material', t + '{', t * 2 + 'color = ' + col(C['shallow']), t * 2 + 'colorFromSpace = ' + col(C['deep']), t + '}', '',
               t + 'Fog', t + '{', t * 2 + 'fogColorStart = ' + col(C['shallow']), t * 2 + 'fogColorEnd = ' + col(C['deep']), t + '}', '}']
-    return '\n'.join(L) + '\n'
+    out = '\n'.join(L) + '\n'
+    if files.get('ring') and has_rings(P):
+        out += ring_snippet(P, tex_path(folder, os.path.splitext(files['ring'])[0], base))
+    return out
 
 
 def export_maps(src_dir, name, P, jobs, folder, size=None, flip=True, log=print, cfg_path=None):
@@ -2648,6 +4309,46 @@ def export_maps(src_dir, name, P, jobs, folder, size=None, flip=True, log=print,
                 im.save(path, 'JPEG', quality=92)
             else:
                 im.save(path, 'PNG')
+        elif kind == 'ring':
+            rp = os.path.join(src_dir, name + '_ring.png')
+            if not os.path.isfile(rp):
+                log('no ring texture in this build - skipped')
+                continue
+            r = np.asarray(Image.open(rp).convert('RGBA'))
+            if fmt == DDS_BC7:
+                save_bc(np.ascontiguousarray(r), path, 'BC7')
+            elif fmt.startswith('DDS'):
+                save_mips(Image.fromarray(r, 'RGBA'), path, 'DXT5')
+            else:
+                Image.fromarray(r, 'RGBA').save(path, 'PNG')
+        elif kind == 'emissive':
+            ep = os.path.join(src_dir, name + '_emissive.png')
+            if not os.path.isfile(ep):
+                log('no lava glow in this build - skipped')
+                continue
+            em = np.asarray(Image.open(ep).convert('RGB'))
+            if size and size != em.shape[1]:
+                em = np.asarray(Image.fromarray(em).resize((size, size // 2), Image.LANCZOS))
+            if fmt.startswith('DDS'):
+                save_colour_dds(em, path, DDS_CODEC.get(fmt, 'DXT1'), flip)
+            else:
+                Image.fromarray(em).save(path, 'PNG')
+        elif kind == 'clouds':
+            if not has_clouds(P):
+                log('no clouds on this planet - skipped')
+                continue
+            for w in export_clouds(P, name, base, folder, flip, log, cfg_path):
+                written.append(w)
+                log('exported ' + w)
+            continue
+        elif kind == 'aurora':
+            if not has_aurora(P):
+                log('no aurora on this planet - skipped')
+                continue
+            for w in export_aurora(P, name, base, fmt, folder, flip, log, cfg_path):
+                written.append(w)
+                log('exported ' + w)
+            continue
         elif kind == 'atmo':
             if not has_atmo(P):
                 log('no atmosphere on this planet - skipped')
@@ -2663,7 +4364,11 @@ def export_maps(src_dir, name, P, jobs, folder, size=None, flip=True, log=print,
             if fine is None:
                 lo, hi = float(hm.min()), float(hm.max())
                 info = dict(info, min_m=lo, max_m=hi)
-            files = {k: names[k] for k in ('height', 'heightfine', 'color', 'normal') if k in names and names[k].lower().endswith('.dds')}
+            files = {k: names[k] for k in ('height', 'heightfine', 'color', 'normal', 'emissive') if k in names and names[k].lower().endswith('.dds')}
+            if 'emissive' in files and not os.path.isfile(os.path.join(src_dir, name + '_emissive.png')):
+                del files['emissive']
+            if 'ring' in names and has_rings(P) and os.path.isfile(os.path.join(src_dir, name + '_ring.png')):
+                files['ring'] = names['ring']
             with open(path, 'w', newline='\n') as f:
                 f.write(kopernicus_snippet(P, info, files, folder, cfg_path))
         written.append(path)
@@ -2709,8 +4414,8 @@ def live_maps(P, W, cache, cancel=None, workers=2):
     nc = cache.setdefault(('N', W), {})
     if len(nc) > 64:
         nc.clear()
-    col, gx, gy = make_colour(P, hm, mk, W, cancel, workers=workers, noise_cache=nc)
-    return col, hm, gx, gy
+    col, gx, gy, em = make_colour(P, hm, mk, W, cancel, workers=workers, noise_cache=nc)
+    return col, hm, gx, gy, em
 
 
 def cmd_make(a):
@@ -2735,10 +4440,21 @@ def cmd_make(a):
         return f
     hm, mk = make_height(P, W, T, CR, progress=prog('height'))
     last[0] = -1
-    col, gx, gy = make_colour(P, hm, mk, W, progress=prog('color'))
+    col, gx, gy, em = make_colour(P, hm, mk, W, progress=prog('color'))
     print('color done', flush=True)
+    del mk
     lo, hi = save_height16(hm, os.path.join(od, P['name'] + '_height.png'))
     Image.fromarray(col).save(os.path.join(od, P['name'] + '_color.png'))
+    ep = os.path.join(od, P['name'] + '_emissive.png')
+    if em is not None:
+        Image.fromarray(em).save(ep)
+    elif os.path.isfile(ep):
+        os.remove(ep)
+    rp = os.path.join(od, P['name'] + '_ring.png')
+    if has_rings(P):
+        Image.fromarray(ring_image(P), 'RGBA').save(rp)
+    elif os.path.isfile(rp):
+        os.remove(rp)
     info = {'min_m': lo, 'max_m': hi, 'radius': P['radius'], 'ocean': P['shape']['ocean'], 'res': W, 'version': APP_VERSION}
     with open(os.path.join(od, P['name'] + '_info.json'), 'w') as f:
         json.dump(info, f, indent=1)
@@ -2746,7 +4462,7 @@ def cmd_make(a):
         json.dump(P, f, indent=1)
     print('height range: %.0f m to %.0f m' % (lo, hi), flush=True)
     print('files done', flush=True)
-    write_preview(P, col, hm, os.path.join(od, P['name'] + '_preview.png'))
+    write_preview(P, col, hm, os.path.join(od, P['name'] + '_preview.png'), em)
     print('preview done', flush=True)
     print('DONE in %.0f s -> %s' % (time.time() - t0, od), flush=True)
 
@@ -2767,10 +4483,18 @@ def cmd_export(a):
         jobs.append(('color', stem('color'), {'dds': DDS_BC1, 'bc1': DDS_BC1, 'bc3': DDS_BC3, 'bc7': DDS_BC7, 'png': 'PNG', 'jpg': 'JPG', 'tga': 'TGA', 'bmp': 'BMP'}[a.color]))
     if a.normal != 'none':
         jobs.append(('normal', stem('normal'), {'dds': DDS_NM, 'bc5': DDS_BC5, 'png': 'PNG'}[a.normal]))
+    if a.emissive != 'none' and os.path.isfile(os.path.join(src, P['name'] + '_emissive.png')):
+        jobs.append(('emissive', P['name'] + '_emissive', {'dds': DDS_BC1, 'bc7': DDS_BC7, 'png': 'PNG'}[a.emissive]))
     if a.preview != 'none':
         jobs.append(('preview', P['name'] + '_preview', {'png': 'PNG', 'jpg': 'JPG'}[a.preview]))
     if a.atmo != 'none' and has_atmo(P):
         jobs.append(('atmo', P['name'] + '_atmo', ATMO_CFG))
+    if a.clouds != 'none' and has_clouds(P):
+        jobs.append(('clouds', P['name'], CLOUD_FMT))
+    if a.aurora != 'none' and has_aurora(P):
+        jobs.append(('aurora', P['name'] + '_aurora', {'dds': DDS_BC3, 'png': 'PNG'}[a.aurora]))
+    if a.ring != 'none' and has_rings(P):
+        jobs.append(('ring', P['name'] + '_ring', {'dds': DDS_BC3, 'bc3': DDS_BC3, 'bc7': DDS_BC7, 'png': 'PNG'}[a.ring]))
     if a.config:
         jobs.append(('config', P['name'] + '_kopernicus', CFG))
     export_maps(src, P['name'], P, jobs, a.to, a.size, not a.no_flip, cfg_path=a.config_path)
@@ -2809,6 +4533,10 @@ def main():
     e.add_argument('--config', action='store_true')
     e.add_argument('--config-path', default=None, help='texture path under GameData written into the config')
     e.add_argument('--atmo', default='cfg', choices=['cfg', 'none'])
+    e.add_argument('--aurora', default='dds', choices=['dds', 'png', 'none'])
+    e.add_argument('--clouds', default='tvc', choices=['tvc', 'none'])
+    e.add_argument('--emissive', default='dds', choices=['dds', 'bc7', 'png', 'none'])
+    e.add_argument('--ring', default='dds', choices=['dds', 'bc3', 'bc7', 'png', 'none'])
     e.add_argument('--size', type=int, default=None)
     e.add_argument('--no-flip', action='store_true')
     n = sp.add_parser('new')
