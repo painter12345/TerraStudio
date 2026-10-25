@@ -1421,7 +1421,10 @@ class App(tk.Tk):
         Slider(self, g, 0, 'Shelf width', ('relief', 'shelf'), 0, 1, 0.02, tip='shallow sea around the coasts before the deep ocean')
         self.section(p, 'Normal map')
         g = self.grid_box(p)
-        Slider(self, g, 0, 'Relief strength', ('normal_strength',), 0, 12, 0.1, tip='how strong the bumps look from orbit (normal map and preview)')
+        Slider(self, g, 0, 'Relief strength', ('normal_strength',), 0, 12, 0.1, tip='how strong the bumps look in the preview')
+        Slider(self, g, 2, 'Normal map scale', ('normal_scale',), 0, 255, 0.5, tip='like the Scale in GIMP’s Normal Map filter (default 10)')
+        ttk.Label(g, text='The exported normal map is made the way GIMP’s Filters → Generic → Normal Map makes it from the height map.',
+                  style='Dim.TLabel', wraplength=520, justify='left').grid(row=4, column=0, columnspan=3, sticky='w', padx=(8, 0), pady=(4, 0))
 
     def tab_landforms(self):
         sf = ScrollFrame(self.nb)
@@ -1763,6 +1766,7 @@ class App(tk.Tk):
         OptSwatch(self, r, ('colors', 'ejecta_color'), [214, 210, 202], 'auto = a lighter version of the ground').frame.pack(side='left')
 
     LAVA_MODE_NAMES = (('star', 'Star-facing side'), ('all', 'All over'))
+    LAVA_STYLE_NAMES = (('plates', 'Torn plates'), ('flowed', 'Flowed and cooled'))
 
     def tab_lava(self):
         sf = ScrollFrame(self.nb)
@@ -1778,9 +1782,33 @@ class App(tk.Tk):
                      'tidally heated moons. The glow is written as an emissive map.')
         g = self.grid_box(p)
         Slider(self, g, 0, 'Amount', A + ('amount',), 0, 1, 0.01, tip='0 = no lava plates')
-        self.combo(g, 2, 'Where', A + ('mode',), list(self.LAVA_MODE_NAMES))
-        Slider(self, g, 3, 'Seed', A + ('seed',), 1, 999, 1, isint=True, tip='a new pattern of plates')
+        self.combo(g, 2, 'Style', A + ('style',), list(self.LAVA_STYLE_NAMES))
+        ttk.Label(g, text='Torn plates: the settings below. Flowed and cooled: the “Flowed lava” part.',
+                  style='Dim.TLabel', font=(FONT, 8)).grid(row=3, column=0, columnspan=3, sticky='w', padx=(8, 0))
+        self.combo(g, 4, 'Where', A + ('mode',), list(self.LAVA_MODE_NAMES))
+        Slider(self, g, 5, 'Seed', A + ('seed',), 1, 999, 1, isint=True, tip='a new pattern of plates, or of the flow')
+        self.section(p, 'Flowed lava')
+        self.note(p, 'For the style “Flowed and cooled”, like Anneheg in the Kcalbeloh System. The lava fills the low '
+                     'ground: everything below the lava level, or the whole sea when the planet has an ocean (the '
+                     'Kopernicus config then writes the ocean in the lava colours). Its surface is worked out as if '
+                     'it had really flowed: currents, eddies and streams along the shores stretch it into streaks and '
+                     'fold it into swirls. Where it is still molten it glows, red at the shore and hotter further out, '
+                     'with floes of crust on it; everywhere else it has cooled into rock that keeps the flow lines. '
+                     'Amount = how molten it is. Changing the flow works the currents out again (a second or two).')
+        g = self.grid_box(p)
+        Slider(self, g, 0, 'Lava level (m)', A + ('level',), -15000, 15000, 10, tip='without an ocean: lava fills everything below this height, with a flat surface')
+        Slider(self, g, 2, 'Flow', A + ('flow',), 0, 3, 0.05, tip='how far the lava has flowed: low = soft streaks, high = folded swirls')
+        Slider(self, g, 4, 'Eddy size', A + ('flow_size',), 0.2, 5, 0.05, tip='size of the currents and swirls')
+        Slider(self, g, 5, 'Along the shores', A + ('shore_flow',), 0, 2, 0.05, tip='how much the lava streams along the coasts and around the highlands')
+        Slider(self, g, 7, 'Hot from the shore (km)', A + ('heat_km',), 1, 1000, 1, tip='how far out the lava gets hotter; small seas stay redder')
+        Slider(self, g, 9, 'Crust floes', A + ('floes',), 0, 1, 0.01, tip='dark floes of cooled crust drifting on the lava')
+        Slider(self, g, 11, 'Glowing cracks', A + ('veins',), 0, 1, 0.01, tip='thin bright cracks through the floes')
+        Slider(self, g, 13, 'Shore glow reach (km)', A + ('glow_km',), 0.5, 200, 0.5, tip='how far the glow reaches onto the rock; its strength is “Heated plate edges” below')
+        Slider(self, g, 15, 'Flow lines on the rock', A + ('cooled',), 0, 1, 0.01, tip='the swirled flow lines frozen into the rock, 0 = off')
+        Slider(self, g, 17, 'Flow ridges (m)', A + ('relief',), 0, 1500, 10, tip='height of the frozen flow ridges on land, 0 = flat')
+        self.swatch_row(p, [('Flow line colour', A + ('cooled_color',))])
         self.section(p, 'Hottest point')
+        self.note(p, 'This and the next parts are for the style “Torn plates”.')
         self.note(p, 'For “Star-facing side”: the point that faces the star (map middle = longitude 180), and how far '
                      'the torn crust reaches from it.')
         g = self.grid_box(p)

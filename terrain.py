@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw, ImageFont
 Image.MAX_IMAGE_PIXELS = None
 
 APP_NAME = 'Terra Studio'
-APP_VERSION = '0.1.17'
+APP_VERSION = '0.2.0'
 FROZEN = bool(getattr(sys, 'frozen', False))
 TOOL = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 ROOT = os.path.abspath(os.path.join(TOOL, '..', '..'))
@@ -108,6 +108,7 @@ DEFAULTS = {
     },
     'rings': {'enabled': False},
     'normal_strength': 2.0,
+    'normal_scale': 10.0,
     'files': {'height': '', 'color': '', 'normal': ''},
     'preview': {'tilt': 0, 'view_lat': 15, 'view_lon': 0},
 }
@@ -146,6 +147,7 @@ def merge(base, over):
 
 
 def normalize(P):
+    rn = dict(P) if isinstance(P, dict) else {}
     rc = P.get('colors', {}) if isinstance(P.get('colors'), dict) else {}
     old_cap = rc.get('cap_lat')
     P = merge(DEFAULTS, P)
@@ -226,6 +228,15 @@ def normalize(P):
     P['lava_ocean'] = lava_ocean_entry(P.get('lava_ocean'))
     P['emission'] = emission_entry(P.get('emission'))
     P['rings'] = ring_entry(P.get('rings'))
+    gm = P.pop('gimp', None)
+    if isinstance(gm, dict) and 'scale' in gm and 'normal_scale' not in rn:
+        P['normal_scale'] = gm['scale']
+    try:
+        P['normal_scale'] = max(0.0, float(P['normal_scale']))
+    except (TypeError, ValueError):
+        P['normal_scale'] = 10.0
+    P.pop('normal_mesh', None)
+    P.pop('normal_style', None)
     return P
 
 
@@ -1497,9 +1508,13 @@ LAVA = {'amount': 0.0, 'mode': 'star', 'lat': 0.0, 'lon': 180.0, 'spread': 105.0
         'tilt': 1500.0, 'depth': 900.0, 'core': 16.0, 'core_depth': 1200.0, 'rafts': 0.6,
         'pools': 0, 'pool_km': 90.0,
         'color': [255, 92, 20], 'hot_color': [255, 196, 92], 'crust_color': [36, 30, 28], 'crust_amount': 0.85,
-        'edge_glow': 0.5, 'glow': 0.85}
+        'edge_glow': 0.5, 'glow': 0.85,
+        'style': 'plates', 'level': 0.0, 'flow': 1.0, 'flow_size': 1.0, 'shore_flow': 1.2, 'relief': 150.0,
+        'heat_km': 60.0, 'floes': 0.5, 'veins': 0.4, 'cooled': 0.5, 'cooled_color': [58, 46, 34], 'glow_km': 15.0}
 LAVA_MODES = ('star', 'all')
-LAVA_LOOK = ('color', 'hot_color', 'crust_color', 'crust_amount', 'edge_glow', 'glow')
+LAVA_STYLES = ('plates', 'flowed')
+LAVA_LOOK = ('color', 'hot_color', 'crust_color', 'crust_amount', 'edge_glow', 'glow',
+             'heat_km', 'floes', 'veins', 'cooled', 'cooled_color', 'glow_km')
 
 
 def lava_entry(a):
@@ -1509,7 +1524,8 @@ def lava_entry(a):
         if k in LAVA:
             e[k] = copy.deepcopy(v)
     for k in ('amount', 'lat', 'lon', 'spread', 'plate_km', 'shrink', 'crack_km', 'widen', 'jagged', 'tilt', 'depth',
-              'core', 'core_depth', 'rafts', 'pool_km', 'crust_amount', 'edge_glow', 'glow'):
+              'core', 'core_depth', 'rafts', 'pool_km', 'crust_amount', 'edge_glow', 'glow',
+              'level', 'flow', 'flow_size', 'shore_flow', 'relief', 'heat_km', 'floes', 'veins', 'cooled', 'glow_km'):
         try:
             e[k] = float(e[k])
         except (TypeError, ValueError):
@@ -1519,7 +1535,7 @@ def lava_entry(a):
             e[k] = int(round(float(e[k])))
         except (TypeError, ValueError):
             e[k] = int(LAVA[k])
-    for k in ('color', 'hot_color', 'crust_color'):
+    for k in ('color', 'hot_color', 'crust_color', 'cooled_color'):
         try:
             e[k] = [int(max(0, min(255, round(float(c))))) for c in e[k]][:3]
             if len(e[k]) != 3:
@@ -1527,6 +1543,15 @@ def lava_entry(a):
         except (TypeError, ValueError):
             e[k] = list(LAVA[k])
     e['mode'] = e['mode'] if e['mode'] in LAVA_MODES else 'star'
+    e['style'] = e['style'] if e['style'] in LAVA_STYLES else 'plates'
+    e['flow'] = max(0.0, min(3.0, e['flow']))
+    e['flow_size'] = max(0.2, min(5.0, e['flow_size']))
+    e['shore_flow'] = max(0.0, min(2.0, e['shore_flow']))
+    e['relief'] = max(0.0, min(3000.0, e['relief']))
+    e['heat_km'] = max(1.0, e['heat_km'])
+    e['glow_km'] = max(0.5, e['glow_km'])
+    for k in ('floes', 'veins', 'cooled'):
+        e[k] = max(0.0, min(1.0, e[k]))
     e['amount'] = max(0.0, min(1.0, e['amount']))
     e['lat'] = max(-90.0, min(90.0, e['lat']))
     e['lon'] = e['lon'] % 360.0
@@ -1548,12 +1573,20 @@ def has_lava(P):
     return float((P.get('lava') or {}).get('amount', 0)) > 0
 
 
+def has_flowed(P):
+    return has_lava(P) and (P.get('lava') or {}).get('style') == 'flowed'
+
+
+def has_plates(P):
+    return has_lava(P) and not has_flowed(P)
+
+
 def lava_shape(P):
     return {k: v for k, v in lava_entry(P.get('lava')).items() if k not in LAVA_LOOK}
 
 
 def lava_setup(P):
-    if not has_lava(P):
+    if not has_plates(P):
         return None
     L = lava_entry(P.get('lava'))
     c = lonlat_vec(L['lat'], L['lon'])
@@ -1726,6 +1759,224 @@ def lava_colourize(P, col, mk, n2):
     return col
 
 
+FLOW_W = 1024
+FLOW_PHASES = 3
+FLOW_STEPS = 10
+_FLOW = {}
+
+
+def flow_level(P):
+    return 0.0 if P['shape']['ocean'] else float(P['lava']['level'])
+
+
+def flow_seed(P):
+    return int(P['seed']) * 31 + int(P['lava']['seed']) * 7919
+
+
+def flow_mask(P, hm):
+    d = np.float32(flow_level(P)) - hm
+    return ss(-30.0, 30.0, d) if P['shape']['ocean'] else ss(-30.0, 0.0, d)
+
+
+def flow_down(a, f):
+    H, W = a.shape
+    return a[:H - H % f, :W - W % f].reshape(H // f, f, W // f, f).mean((1, 3))
+
+
+def flow_fields(P, hm):
+    # the lava gets hotter away from its shores, and the rock right next to it is lit up
+    L = P['lava']
+    H, W = hm.shape
+    km = 2 * math.pi * float(P['radius']) / 1000.0
+    out = []
+    for reach in (float(L['heat_km']), float(L['glow_km'])):
+        w = min(W, 1024)
+        s = reach / (km / w)
+        while s > 6 and w > 64:
+            w //= 2
+            s /= 2
+        f = W // w
+        m = flow_mask(P, flow_down(hm, f) if f > 1 else hm).astype(np.float32)
+        out.append(np.clip(gblur(m, max(s, 0.3)), 0, 1).astype(np.float32))
+    return out
+
+
+def flow_currents(P, hm, Wv):
+    # divergence-free currents on the sphere: the flow runs along the lines of a stream function made of
+    # big currents, eddies and the height itself, so the lava also streams along the shores
+    L = P['lava']
+    Hv = Wv // 2
+    f = max(1, hm.shape[1] // Wv)
+    hs = gblur((flow_down(hm, f) if f > 1 else hm).astype(np.float32), Wv / 256.0)
+    rel = hs - np.float32(flow_level(P))
+    hn = np.tanh(rel / np.float32(max(1.0, float(np.percentile(np.abs(rel), 90)))) * np.float32(1.5))
+    X, Y, Z = rows_xyz(Wv, Hv, 0, Hv)
+    lat = row_lat(Hv, 0, Hv)[:, None]
+    lon = ((np.arange(Wv) + 0.5) / Wv * 2 * math.pi)[None]
+    sl, cl = np.sin(lat), np.cos(lat)
+    E = np.stack(np.broadcast_arrays(-np.sin(lon), np.cos(lon), 0 * lat), -1).astype(np.float32)
+    N = np.stack(np.broadcast_arrays(-sl * np.cos(lon), -sl * np.sin(lon), cl), -1).astype(np.float32)
+    dlat, dlon = math.pi / Hv, 2 * math.pi / Wv
+    cw = np.maximum(cl, 0.05).astype(np.float32)
+    polar = np.clip(cl / 0.15, 0, 1).astype(np.float32)[..., None]
+
+    def along(psi):
+        gn = np.empty_like(psi)
+        gn[1:-1] = (psi[:-2] - psi[2:]) / np.float32(2 * dlat)
+        gn[0], gn[-1] = gn[1], gn[-2]
+        ge = (np.roll(psi, -1, 1) - np.roll(psi, 1, 1)) / (np.float32(2 * dlon) * cw)
+        v = (gn[..., None] * E - ge[..., None] * N) * polar
+        return v / np.float32(max(float(np.percentile(np.sqrt((v * v).sum(-1)), 90)), 1e-6))
+    sd = flow_seed(P)
+    fs = float(L['flow_size'])
+    fm = fmax_for(Wv)
+    vh = along(hn) * np.float32(L['shore_flow'])
+    out = []
+    for k in range(FLOW_PHASES):
+        vb = along(fbm(X, Y, Z, 1.2 / fs, fm, sd + 500 + 17 * k, 0.5, 3))
+        ve = along(fbm(X, Y, Z, 4.5 / fs, fm, sd + 505 + 17 * k, 0.5, 3))
+        out.append((np.float32(0.7) * vb + np.float32(0.3) * ve + vh).astype(np.float32))
+    return out
+
+
+def sample_vec(G, x, y, z):
+    Hv, Wv = G.shape[:2]
+    lat = np.arcsin(np.clip(z, -1, 1))
+    lon = np.arctan2(y, x)
+    fx = (lon / np.float32(2 * math.pi)) % 1.0 * Wv - 0.5
+    fy = np.clip((0.5 - lat / np.float32(math.pi)) * Hv - 0.5, 0, Hv - 1.001)
+    x0 = np.floor(fx).astype(np.int32)
+    y0 = fy.astype(np.int32)
+    tx = (fx - x0)[:, None]
+    ty = (fy - y0)[:, None]
+    x0 %= Wv
+    x1 = (x0 + 1) % Wv
+    y1 = np.minimum(y0 + 1, Hv - 1)
+    return (G[y0, x0] * (1 - tx) + G[y0, x1] * tx) * (1 - ty) + (G[y1, x0] * (1 - tx) + G[y1, x1] * tx) * ty
+
+
+def flow_trace(P, hm, workers=None, cancel=None):
+    # follows every point of the surface back along the currents: the pattern the lava carried there
+    # gets stretched into streaks and folded into swirls, like lava that flowed and cooled
+    L = P['lava']
+    Wf = min(hm.shape[1], FLOW_W)
+    Hf = Wf // 2
+    V = flow_currents(P, hm, min(512, Wf))
+    fs = float(L['flow_size'])
+    dt = np.float32(0.55 * float(L['flow']) * fs / (FLOW_PHASES * FLOW_STEPS))
+    q = np.zeros((Hf, Wf, 3), np.float32)
+
+    def job(r0, r1):
+        if cancel:
+            cancel()
+        X, Y, Z = rows_xyz(Wf, Hf, r0, r1)
+        x, y, z = X.ravel(), Y.ravel(), Z.ravel()
+        for G in V[::-1]:
+            for _ in range(FLOW_STEPS):
+                v = sample_vec(G, x, y, z)
+                x = x - dt * v[:, 0]; y = y - dt * v[:, 1]; z = z - dt * v[:, 2]
+                n = np.float32(1) / np.sqrt(x * x + y * y + z * z)
+                x *= n; y *= n; z *= n
+        q[r0:r1] = np.stack([x, y, z], -1).reshape(r1 - r0, Wf, 3)
+    run_strips(job, strips(Hf, Wf), workers)
+    return q
+
+
+def flow_rows(q, W, H, r0, r1):
+    qx, qy, qz = bilinear_rows(np.moveaxis(q, -1, 0), W, H, r0, r1)
+    n = np.float32(1) / np.sqrt(qx * qx + qy * qy + qz * qz + np.float32(1e-12))
+    return qx * n, qy * n, qz * n
+
+
+def flow_dye(P, qx, qy, qz, fmax):
+    sd = flow_seed(P)
+    fs = float(P['lava']['flow_size'])
+    d1 = fbm(qx, qy, qz, 9.0 / fs, fmax, sd + 601, 0.62, 8)
+    d2 = fbm(qx, qy, qz, 2.5 / fs, fmax, sd + 611, 0.55, 6)
+    return d1, d2
+
+
+def flow_store(P, W, q):
+    if len(_FLOW) > 4:
+        _FLOW.pop(next(iter(_FLOW)))
+    _FLOW[(height_key(P), W)] = q
+
+
+def apply_flow_relief(P, hm, q, workers=None, cancel=None):
+    # the flow lines frozen into low ridges on the land
+    H, W = hm.shape
+    amp = np.float32(P['lava']['relief'])
+    lvl = flow_level(P)
+    fm = fmax_for(W)
+
+    def job(r0, r1):
+        if cancel:
+            cancel()
+        d1, d2 = flow_dye(P, *flow_rows(q, W, H, r0, r1), fm)
+        h = hm[r0:r1]
+        polar = np.clip(np.cos(row_lat(H, r0, r1)) / 0.25, 0, 1).astype(np.float32)[:, None]
+        h += amp * polar * ss(lvl + 30.0, lvl + 30.0 + 3.0 * float(amp), h) * (ss(-0.15, 0.55, d1) - np.float32(0.35) + np.float32(0.3) * d2)
+    run_strips(job, strips(H, W), workers)
+
+
+def flow_strip(P, hm, X, Y, Z, fmax, hb, hg, qr):
+    L = P['lava']
+    lc, hc, cc = [np.array(L[k], np.float32) for k in ('color', 'hot_color', 'crust_color')]
+    cool = lc * np.array([0.72, 0.4, 0.6], np.float32)
+    lvl = flow_level(P)
+    m = flow_mask(P, hm).astype(np.float32)
+    halo = np.clip(hg * 2, 0, 1) ** 2 * (1 - m) * np.float32(L['edge_glow']) * (1 - ss(lvl + 60.0, lvl + 1500.0, hm))
+    d1, d2 = flow_dye(P, *qr, fmax)
+    ca = np.float32(L['cooled'])
+    streak = ss(0.05, 0.5, d1) * ca * (1 - m)
+    dark = ss(-0.05, -0.45, d1) * ca * np.float32(0.6) * (1 - m)
+    c1 = np.array(L['cooled_color'], np.float32)
+    c2 = np.full(3, float(c1 @ np.array([0.3, 0.59, 0.11], np.float32)), np.float32)
+    cooled = c1 + (c2 - c1) * ss(-0.35, 0.35, d2)[..., None]
+    rgb = np.zeros(hm.shape + (3,), np.float32)
+    em = np.zeros(hm.shape + (3,), np.float32)
+    idx = np.flatnonzero(m > 1e-3)
+    if idx.size:
+        sd = flow_seed(P)
+        fs = float(L['flow_size'])
+        qx, qy, qz = (a.reshape(-1)[idx] for a in qr)
+        a1, a2 = d1.reshape(-1)[idx], d2.reshape(-1)[idx]
+        edge = fbm(qx, qy, qz, 24.0 / fs, fmax, sd + 631, 0.7, 6)
+        fine = fbm(qx, qy, qz, 48.0 / fs, fmax, sd + 651, 0.6, 4)
+        vein = ridged(qx, qy, qz, 7.0 / fs, fmax, sd + 641, 0.5, 5)
+        heat = np.clip((hb.reshape(-1)[idx] - np.float32(0.5)) * 2, 0, 1)
+        rim = 1 - heat
+        amt = float(L['amount'])
+        T = np.clip((np.float32(0.18) + np.float32(0.42) * heat) * np.float32(0.3 + 0.75 * amt)
+                    + np.float32(0.12) * rim + np.float32(0.3) * a1 + np.float32(0.4) * a2 + np.float32(0.22) * fine, 0, 1)
+        fl = float(L['floes']) + 0.5 * (1 - amt)
+        thr = 0.7 - 1.1 * fl
+        c0 = -(np.float32(0.8) * a2 + np.float32(0.25) * a1) + np.float32(0.4) * edge - np.float32(0.3) * rim
+        crust = ss(thr - 0.03, thr + 0.03, c0)
+        crust = np.maximum(crust, ss(0.18, 0.26, fine) * ss(thr - 0.45, thr - 0.02, c0))
+        crust *= np.float32(min(1.0, fl * 4))
+        crust *= 1 - np.float32(L['veins']) * ss(0.8, 0.9, vein)
+        t = T[:, None]
+        ramp = np.where(t < 0.5, cool + (lc - cool) * (t * 2), lc + (hc - lc) * ((t - 0.5) * 2))
+        ck = cc[None] * (1 + np.float32(0.25) * a1)[:, None]
+        mid = cool[None] * np.float32(0.55)
+        lv = ramp + (mid - ramp) * ss(0.0, 0.45, crust)[:, None]
+        rgb.reshape(-1, 3)[idx] = lv + (ck - lv) * ss(0.45, 1.0, crust)[:, None]
+        w = m.reshape(-1)[idx] * (1 - np.float32(0.92) * crust) * (np.float32(0.3) + np.float32(0.25) * T)
+        em.reshape(-1, 3)[idx] = ramp * w[:, None]
+    em += cool * (halo * np.float32(0.5))[..., None]
+    em *= np.float32(L['glow'])
+    return {'m': m, 'rgb': rgb, 'halo': halo, 'warm': lc, 'streak': streak, 'dark': dark, 'cooled': cooled, 'em': em}
+
+
+def flow_colourize(col, fd, before):
+    if before:
+        col = col * (1 - fd['dark'])[..., None]
+        return col + (fd['cooled'] - col) * fd['streak'][..., None]
+    col = col + (fd['warm'] * np.float32(0.85) - col) * np.clip(fd['halo'] * np.float32(1.5), 0, 1)[..., None]
+    return col + (fd['rgb'] - col) * fd['m'][..., None]
+
+
 def default_feature(t, radius):
     Rk = radius / 1000.0
     size = {'crater': 0.12, 'basin': 0.6, 'volcano': 0.4, 'mountain': 0.35, 'plateau': 0.3}[t] * Rk
@@ -1799,7 +2050,11 @@ def emission_entry(a):
 
 
 def has_lava_ocean(P):
-    return bool(P['shape']['ocean']) and bool((P.get('lava_ocean') or {}).get('enabled'))
+    return bool(P['shape']['ocean']) and bool((P.get('lava_ocean') or {}).get('enabled')) and not has_flowed(P)
+
+
+def is_lava_sea(P):
+    return has_lava_ocean(P) or (bool(P['shape']['ocean']) and has_flowed(P))
 
 
 def lava_rivers(P):
@@ -1817,7 +2072,7 @@ def has_emission(P):
 
 
 def mk_channels(P):
-    return 10 if (has_lava(P) or volcano_glow(P)) else 5
+    return 10 if (has_plates(P) or volcano_glow(P)) else 5
 
 
 def lava_ocean_noise(P, X, Y, Z, fmax):
@@ -1878,13 +2133,13 @@ def glow_colourize(P, col, hm, mk, n2, lo, nj=None):
     return col
 
 
-def emissive_strip(P, hm, mk, lo):
+def emissive_strip(P, hm, mk, lo, fd=None):
     H, W = hm.shape
-    em = np.zeros((H, W, 3), np.float32)
+    em = np.zeros((H, W, 3), np.float32) if fd is None else fd['em'].copy()
     lc, hc, cc = lava_paint(P)
     E = emission_entry(P.get('emission'))
     gl = lava_entry(P.get('lava'))['glow']
-    if mk is not None and mk.shape[0] > 5 and has_lava(P):
+    if mk is not None and mk.shape[0] > 5 and has_plates(P):
         L = lava_entry(P.get('lava'))
         lv, halo, heat, hot, lcol = lava_colours(L, mk)
         w = lv * (np.float32(0.4) + np.float32(0.45) * np.clip(heat + hot, 0, 1)) + halo * np.float32(L['edge_glow'] * 0.3)
@@ -1918,11 +2173,11 @@ def colour_noise(P, X, Y, Z, fmax):
     return n1, n2, n3, nj, lo
 
 
-def colourize(P, hm, gx, gy, mk, lat, noise):
+def colourize(P, hm, gx, gy, mk, lat, noise, fd=None):
     C = P['colors']
     n1, n2, n3, nj = noise[:4]
     lo = noise[4] if len(noise) > 4 else None
-    lava_sea = has_lava_ocean(P)
+    lava_sea = is_lava_sea(P)
     hj = hm + np.float32(float(C['jitter']) * 1.6) * nj
     hs = np.array([s[0] for s in C['stops']], np.float32)
     cs = np.array([s[1] for s in C['stops']], np.float32)
@@ -1994,6 +2249,8 @@ def colourize(P, hm, gx, gy, mk, lat, noise):
         else:
             ec = np.array(C['ejecta_color'], np.float32)[None, None]
             col += (ec - col) * (np.clip(ej * np.float32(1.25), 0, 1))[..., None]
+    if fd is not None:
+        col = flow_colourize(col, fd, True)
     if ocean and not lava_sea:
         d = np.maximum(-hm, 0)
         wd = max(float(C['water_depth']), 1.0)
@@ -2018,9 +2275,13 @@ def colourize(P, hm, gx, gy, mk, lat, noise):
     ice = np.maximum(ice, sn)
     if lava_sea:
         ice = ice * ss(np.float32(0), np.float32(150), hm)
+    if fd is not None:
+        ice = ice * (1 - fd['m'])
     icec = np.array(C['ice'], np.float32)[None, None] * (1 + np.float32(0.06) * n2 + np.float32(0.04) * nj)[..., None]
     col += (icec - col) * ice[..., None]
-    if mk is not None and mk.shape[0] > 5 and has_lava(P):
+    if fd is not None:
+        col = flow_colourize(col, fd, False)
+    if mk is not None and mk.shape[0] > 5 and has_plates(P):
         col = lava_colourize(P, col, mk, n2)
     if has_emission(P):
         col = glow_colourize(P, col, hm, mk, n2, lo, nj)
@@ -2095,6 +2356,13 @@ def make_height(P, W, T=None, CR=None, cancel=None, progress=None, workers=None)
         if LV is not None:
             apply_lava(P, LV, hm[r0:r1], sub, X, Y, Z, W, H, r0, fm)
     run_strips(job, strips(H, W), workers, progress)
+    if has_flowed(P):
+        q = flow_trace(P, hm, workers, cancel)
+        if float(P['lava']['relief']) > 0:
+            apply_flow_relief(P, hm, q, workers, cancel)
+        if not P['shape']['ocean']:
+            np.maximum(hm, np.float32(flow_level(P)), out=hm)
+        flow_store(P, W, q)
     return hm, mk
 
 
@@ -2109,6 +2377,12 @@ def make_colour(P, hm, mk, W, cancel=None, progress=None, workers=None, noise_ca
     fm = fmax_for(W)
     lat = row_lat(H, 0, H)
     lok = json.dumps(lava_ocean_entry(P.get('lava_ocean')) if has_lava_ocean(P) else None, sort_keys=True)
+    lf = q = None
+    if has_flowed(P):
+        lf = flow_fields(P, hm)
+        q = _FLOW.get((height_key(P), W))
+        if q is None:
+            q = flow_trace(P, hm, workers, cancel)
 
     def job(r0, r1):
         if cancel:
@@ -2121,26 +2395,42 @@ def make_colour(P, hm, mk, W, cancel=None, progress=None, workers=None, noise_ca
             if noise_cache is not None:
                 noise_cache[key] = nz
         sub = None if mk is None else mk[:, r0:r1]
-        col[r0:r1] = colourize(P, hm[r0:r1], gx[r0:r1], gy[r0:r1], sub, lat[r0:r1], nz)
+        fd = None
+        if lf is not None:
+            X, Y, Z = rows_xyz(W, H, r0, r1)
+            hb, hg = [bilinear_rows(f[None], W, H, r0, r1)[0] for f in lf]
+            fd = flow_strip(P, hm[r0:r1], X, Y, Z, fm, hb, hg, flow_rows(q, W, H, r0, r1))
+        col[r0:r1] = colourize(P, hm[r0:r1], gx[r0:r1], gy[r0:r1], sub, lat[r0:r1], nz, fd)
         if em is not None:
-            em[r0:r1] = emissive_strip(P, hm[r0:r1], sub, nz[4] if len(nz) > 4 else None)
+            em[r0:r1] = emissive_strip(P, hm[r0:r1], sub, nz[4] if len(nz) > 4 else None, fd)
     run_strips(job, strips(H, W), workers, progress)
     return col, gx, gy, em
 
 
-def normal_rgba(hm, radius, strength, ocean, flip=True):
-    gx, gy = slopes(hm, radius, 0.5)
+def normal_gimp(hm, scale, ocean, flip=True):
+    lo, hi = float(hm.min()), float(hm.max())
+    h = ((hm - np.float32(lo)) / np.float32(max(hi - lo, 1e-6))).astype(np.float32)
+    l = np.roll(h, 1, 1); r = np.roll(h, -1, 1)
+    t = np.empty_like(h); b = np.empty_like(h)
+    t[1:] = h[:-1]; t[0] = h[0]
+    b[:-1] = h[1:]; b[-1] = h[-1]
+    k = np.float32(scale / 2.0)
+    nx = k * (l - r)
+    ny = k * (t - b)
     if ocean:
         wet = hm < 0
-        gx = np.where(wet, 0, gx); gy = np.where(wet, 0, gy)
-    k = np.float32(strength)
-    nx = -k * gx; ny = -k * gy
-    nn = np.sqrt(nx * nx + ny * ny + 1)
-    A = np.clip(128 + 127 * nx / nn + 0.5, 1, 255).astype(np.uint8)
-    G = np.clip(128 + 127 * ny / nn + 0.5, 1, 255).astype(np.uint8)
+        nx = np.where(wet, 0, nx); ny = np.where(wet, 0, ny)
+    nz = np.float32(1.0) / np.sqrt(nx * nx + ny * ny + np.float32(1.0))
+    nx = nx * nz; ny = ny * nz
+    A = np.clip(np.rint(255 * (0.5 + 0.5 * nx)), 0, 255).astype(np.uint8)
+    G = np.clip(np.rint(255 * (0.5 + 0.5 * ny)), 0, 255).astype(np.uint8)
     if flip:
         A = A[::-1]; G = G[::-1]
     return np.ascontiguousarray(G), np.ascontiguousarray(A)
+
+
+def make_normal(P, hm, ocean, flip=True):
+    return normal_gimp(hm, float(P.get('normal_scale', 10.0)), ocean, flip)
 
 
 def shade_map(gx, gy, strength, light=(-0.55, 0.55, 0.63)):
@@ -4222,7 +4512,7 @@ def kopernicus_snippet(P, info, files, folder, base=None):
             L += [t + 'VertexColorMapEmissive', t + '{', t * 2 + 'blendMode = Additive',
                   t * 2 + 'map = ' + tex_path(folder, files['emissive'], base), t * 2 + 'brightness = 1', t + '}']
         L += ['}']
-    if has_lava_ocean(P):
+    if is_lava_sea(P):
         lc, hc, cc = [list(v) for v in lava_paint(P)]
         dk = [v * 0.55 for v in lc]
         L += ['Ocean', '{', t + 'ocean = true', t + 'density = 2.6', t + 'oceanColor = ' + col(lc), '',
@@ -4282,7 +4572,7 @@ def export_maps(src_dir, name, P, jobs, folder, size=None, flip=True, log=print,
             else:
                 Image.fromarray(c).save(path, PIL_FMT[fmt])
         elif kind == 'normal':
-            G, A = normal_rgba(hm, float(info.get('radius', P['radius'])), float(P['normal_strength']), bool(info.get('ocean', P['shape']['ocean'])), flip=True)
+            G, A = make_normal(P, hm, bool(info.get('ocean', P['shape']['ocean'])), flip=True)
             if fmt == DDS_BC5:
                 rg = np.stack([A, G, np.zeros_like(G)], -1)
                 if not flip:
@@ -4295,9 +4585,9 @@ def export_maps(src_dir, name, P, jobs, folder, size=None, flip=True, log=print,
                 save_mips(Image.fromarray(rgba, 'RGBA'), path, 'DXT5')
             else:
                 g8 = G[::-1].astype(np.float32); a8 = A[::-1].astype(np.float32)
-                x = (a8 - 128) / 127.0; y = (g8 - 128) / 127.0
+                x = a8 / 127.5 - 1; y = g8 / 127.5 - 1
                 zz = np.sqrt(np.clip(1 - x * x - y * y, 0, 1))
-                rgb = np.stack([a8, g8, 128 + 127 * zz], -1).clip(0, 255).astype(np.uint8)
+                rgb = np.stack([a8, g8, np.rint(255 * (0.5 + 0.5 * zz))], -1).clip(0, 255).astype(np.uint8)
                 Image.fromarray(rgb).save(path, 'PNG')
         elif kind == 'preview':
             pp = os.path.join(src_dir, name + '_preview.png')

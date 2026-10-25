@@ -1,0 +1,557 @@
+{
+ "name": "FlowedMoon",
+ "seed": 4401,
+ "radius": 508000.0,
+ "shape": {
+  "ocean": true,
+  "land": 0.68,
+  "continents": 3,
+  "warp": 1.4,
+  "coast": 0.8,
+  "islands": 0.1,
+  "size_var": 0.5,
+  "bias": 0.0
+ },
+ "relief": {
+  "high": 9000.0,
+  "low": -1600.0,
+  "mountains": 0.5,
+  "mountain_size": 1.2,
+  "mountain_area": 0.45,
+  "ranges": 0.4,
+  "hills": 0.7,
+  "hill_size": 1.0,
+  "plains": 0.25,
+  "roughness": 0.6,
+  "shelf": 0.15,
+  "sharpness": 1.4,
+  "canyons": 0.0,
+  "canyon_depth": 2500.0,
+  "canyon_width": 60.0
+ },
+ "volcanoes": {
+  "count": 2,
+  "seed": 9,
+  "size_km": 160.0,
+  "height": 6000.0,
+  "caldera": 0.6,
+  "size_var": 0.4
+ },
+ "features": [],
+ "plateaus": {
+  "amount": 0.0,
+  "height": 1500.0,
+  "size": 1.0,
+  "edge": 0.35,
+  "flat": 0.8
+ },
+ "ridge": {
+  "height": 0.0,
+  "width": 40.0,
+  "coverage": 360.0,
+  "lon": 180.0,
+  "lat": 0.0,
+  "tilt": 0.0,
+  "segments": 0.0,
+  "ragged": 0.5,
+  "wander": 0.3,
+  "seed": 1
+ },
+ "water": {
+  "rivers": 0.0,
+  "width": 4.0,
+  "depth": 80.0,
+  "valleys": 0.5,
+  "valley_width": 8.0
+ },
+ "cracks": {
+  "amount": 0.0,
+  "style": "lines",
+  "count": 8,
+  "curvy": 0.3,
+  "width": 6.0,
+  "depth": 300.0,
+  "ridges": 0.5,
+  "cell_size": 250.0,
+  "seed": 1
+ },
+ "craters": {
+  "count": 400,
+  "seed": 31,
+  "min_km": 6.0,
+  "max_km": 180.0,
+  "size_mix": 1.9,
+  "depth": 1.0,
+  "fresh": 0.3,
+  "ejecta": 0.1,
+  "rays": 0.0
+ },
+ "colors": {
+  "stops": [
+   [
+    -1600.0,
+    [
+     8,
+     7,
+     7
+    ]
+   ],
+   [
+    0.0,
+    [
+     13,
+     11,
+     10
+    ]
+   ],
+   [
+    800.0,
+    [
+     16,
+     13,
+     12
+    ]
+   ],
+   [
+    3000.0,
+    [
+     21,
+     17,
+     15
+    ]
+   ],
+   [
+    6000.0,
+    [
+     28,
+     23,
+     20
+    ]
+   ],
+   [
+    9000.0,
+    [
+     38,
+     32,
+     28
+    ]
+   ]
+  ],
+  "jitter": 300.0,
+  "patches": 0.4,
+  "patch_size": 1.2,
+  "patch_color": [
+   24,
+   15,
+   12
+  ],
+  "rock": [
+   20,
+   17,
+   15
+  ],
+  "rock_slope": [
+   16.0,
+   34.0
+  ],
+  "rock_amount": 0.6,
+  "ice": [
+   236,
+   240,
+   246
+  ],
+  "cap_north": 90.0,
+  "cap_south": 90.0,
+  "cap_ragged": 0.5,
+  "sea_ice": 0.0,
+  "snow_line": 99999.0,
+  "snow_slope": 28.0,
+  "shallow": [
+   52,
+   118,
+   138
+  ],
+  "deep": [
+   16,
+   36,
+   72
+  ],
+  "water_depth": 600.0,
+  "dry": {
+   "amount": 0.0,
+   "lat": 25.0,
+   "width": 12.0,
+   "color": [
+    178,
+    152,
+    104
+   ]
+  },
+  "cold": {
+   "amount": 0.0,
+   "lat": 55.0,
+   "color": [
+    116,
+    116,
+    96
+   ]
+  },
+  "crater_floor": [
+   10,
+   9,
+   9
+  ],
+  "crater_floor_amount": 0.3,
+  "ejecta_color": null,
+  "volcano_color": [
+   26,
+   18,
+   14
+  ],
+  "volcano_amount": 0.6,
+  "brightness": 0.0,
+  "contrast": 1.0,
+  "saturation": 1.0,
+  "river_color": null,
+  "river_amount": 1.0,
+  "crack_color": [
+   120,
+   76,
+   56
+  ],
+  "crack_amount": 0.7
+ },
+ "rings": {
+  "enabled": false,
+  "inner": 1.35,
+  "outer": 2.3,
+  "angle": 0.0,
+  "opacity": 0.85,
+  "zones": 4,
+  "ringlets": 0.6,
+  "detail": 1.0,
+  "edge": 0.3,
+  "variation": 0.4,
+  "gaps": [
+   [
+    0.62,
+    0.035,
+    1.0
+   ],
+   [
+    0.88,
+    0.008,
+    0.9
+   ]
+  ],
+  "inner_color": null,
+  "middle_color": null,
+  "outer_color": null,
+  "size": 2048,
+  "pattern": 0,
+  "view": 18.0
+ },
+ "normal_strength": 2.5,
+ "normal_mesh": false,
+ "files": {
+  "height": "FlowedMoon_height.dds",
+  "color": "FlowedMoon_color.dds",
+  "normal": "FlowedMoon_normal.dds"
+ },
+ "preview": {
+  "tilt": 0,
+  "view_lat": 15,
+  "view_lon": 120
+ },
+ "lava": {
+  "amount": 1.0,
+  "mode": "all",
+  "lat": 0.0,
+  "lon": 180.0,
+  "spread": 105.0,
+  "seed": 1,
+  "plate_km": 90.0,
+  "shrink": 0.65,
+  "crack_km": 7.0,
+  "widen": 2.5,
+  "jagged": 0.5,
+  "tilt": 1500.0,
+  "depth": 900.0,
+  "core": 16.0,
+  "core_depth": 1200.0,
+  "rafts": 0.6,
+  "pools": 0,
+  "pool_km": 90.0,
+  "color": [
+   250,
+   108,
+   34
+  ],
+  "hot_color": [
+   255,
+   190,
+   64
+  ],
+  "crust_color": [
+   30,
+   17,
+   12
+  ],
+  "crust_amount": 0.85,
+  "edge_glow": 0.5,
+  "glow": 0.85,
+  "style": "flowed",
+  "level": 0.0,
+  "flow": 1.0,
+  "flow_size": 1.0,
+  "shore_flow": 1.2,
+  "relief": 150.0,
+  "heat_km": 60.0,
+  "floes": 0.5,
+  "veins": 0.4,
+  "cooled": 0.5,
+  "cooled_color": [
+   58,
+   46,
+   34
+  ],
+  "glow_km": 15.0
+ },
+ "atmosphere": {
+  "enabled": false,
+  "atmosphereStartRadiusScale": 1.0,
+  "HR": 3.84,
+  "HM": 1.0,
+  "m_betaR": [
+   0.0153408,
+   0.0357075,
+   0.0875489
+  ],
+  "BETA_MSca": [
+   0.0121406,
+   0.0121406,
+   0.0121406
+  ],
+  "m_mieG": 0.85,
+  "useOzone": true,
+  "ozoneAbsorption": [
+   0.000493594,
+   0.00142889,
+   6.45469e-05
+  ],
+  "ozoneHeight": 20.0,
+  "ozoneFalloff": 12.0,
+  "averageGroundReflectance": 0.1,
+  "multipleScattering": true,
+  "godrayStrength": 0.7,
+  "configPoints": [
+   {
+    "altitude": 0.0,
+    "skyExposure": 0.2,
+    "skyAlpha": 1.0,
+    "skyExtinctionTint": 1.0,
+    "scatteringExposure": 0.2,
+    "extinctionThickness": 1.0,
+    "postProcessAlpha": 1.0,
+    "postProcessDepth": 0.0,
+    "extinctionTint": 1.0
+   }
+  ],
+  "sun": "Sun",
+  "sun_color": [
+   255,
+   255,
+   255
+  ],
+  "cloud_integration": true,
+  "flat_model": true,
+  "eclipse_casters": "",
+  "sun_angle": 55.0,
+  "view": "planet",
+  "extra": [
+   [
+    "flattenScaledSpaceMesh",
+    "0"
+   ],
+   [
+    "rimBlend",
+    "20"
+   ],
+   [
+    "rimpower",
+    "600"
+   ],
+   [
+    "specR",
+    "40"
+   ],
+   [
+    "specG",
+    "40"
+   ],
+   [
+    "specB",
+    "40"
+   ],
+   [
+    "shininess",
+    "50"
+   ],
+   [
+    "noonSunlightExtinctionStrength",
+    "1"
+   ],
+   [
+    "cloudColorMultiplier",
+    "1"
+   ],
+   [
+    "cloudScatteringMultiplier",
+    "0.2"
+   ],
+   [
+    "cloudSkyIrradianceMultiplier",
+    "0"
+   ],
+   [
+    "volumetricsColorMultiplier",
+    "1"
+   ],
+   [
+    "EVEIntegration_preserveCloudColors",
+    "False"
+   ],
+   [
+    "adjustScaledTexture",
+    "False"
+   ],
+   [
+    "scaledLandBrightnessAdjust",
+    "1"
+   ],
+   [
+    "scaledLandContrastAdjust",
+    "1"
+   ],
+   [
+    "scaledLandSaturationAdjust",
+    "1"
+   ],
+   [
+    "scaledOceanBrightnessAdjust",
+    "1"
+   ],
+   [
+    "scaledOceanContrastAdjust",
+    "1"
+   ],
+   [
+    "scaledOceanSaturationAdjust",
+    "1"
+   ]
+  ]
+ },
+ "aurora": {
+  "enabled": false,
+  "seed": 1,
+  "north": true,
+  "south": true,
+  "north_tilt": 8.0,
+  "north_lon": 40.0,
+  "south_tilt": 10.0,
+  "south_lon": 215.0,
+  "oval": 17.0,
+  "wobble": 7.0,
+  "polar_gap": 0.0,
+  "curtains": 4,
+  "spread": 1.0,
+  "width": 1.5,
+  "patchy": 0.5,
+  "rays": 0.65,
+  "glow": 0.16,
+  "brightness": 0.9,
+  "color": [
+   41,
+   255,
+   107
+  ],
+  "edge_color": [
+   242,
+   97,
+   217
+  ],
+  "core_color": [
+   140,
+   255,
+   204
+  ],
+  "top_color": [
+   230,
+   56,
+   128
+  ],
+  "top_edge_color": [
+   128,
+   71,
+   255
+  ],
+  "top_core_color": [
+   255,
+   128,
+   191
+  ],
+  "layers": 7,
+  "top_layers": 3,
+  "altitude": 17000.0,
+  "spacing": 2500.0,
+  "opacity": 130,
+  "fade": 0.42,
+  "speed": 12.0,
+  "size": 4096
+ },
+ "clouds": {
+  "enabled": false,
+  "seed": 1,
+  "size": 4096,
+  "swirl": 1.0,
+  "swirl_size": 1.0,
+  "wind": 1.0,
+  "bands": 3,
+  "streaks": 0.7,
+  "breakup": 0.5,
+  "fair": 0.45,
+  "speckle": 0.5,
+  "systems": 3,
+  "system_cover": 0.5,
+  "fair_pct": 35.0,
+  "system_pct": 30.0,
+  "cirrus_pct": 15.0,
+  "duration": 16.0,
+  "repeat": 30.0,
+  "fade": 5.0,
+  "cirrus": 0.5,
+  "base": 6500.0,
+  "height": 1.0,
+  "cirrus_altitude": 14300.0,
+  "speed": 29.89,
+  "brightness": 512,
+  "color": [
+   120,
+   120,
+   120
+  ]
+ },
+ "lava_ocean": {
+  "enabled": false,
+  "crust": 0.55,
+  "crust_km": 60.0,
+  "shore": 0.5,
+  "glow": 0.9
+ },
+ "emission": {
+  "cracks": 0.0,
+  "volcanoes": 0.0,
+  "flows": 0.5,
+  "rivers": 0.0
+ }
+}
