@@ -10,12 +10,15 @@ except Exception:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import terrain as tr
+import kopmod_ui
+import biomemaker_ui
+import hazard
 
 GEN = os.path.join(tr.TOOL, 'terrain.py')
 RES = ['512', '1024', '2048', '4096', '8192']
 LIVE_RES = ['512', '1024']
 RES_INFO = {'512': 'a few seconds', '1024': 'about 10 s', '2048': 'about 30 s',
-            '4096': 'about 1\u20132 min', '8192': 'about 5\u201310 min'}
+            '4096': 'about 1-2 min', '8192': 'about 5-10 min'}
 BG = '#1b1f27'
 PANEL = '#232934'
 FIELD = '#2c3340'
@@ -123,6 +126,27 @@ def make_style(root):
     root.option_add('*TCombobox*Listbox.background', FIELD)
     root.option_add('*TCombobox*Listbox.foreground', FG)
     root.option_add('*TCombobox*Listbox.selectBackground', ACC)
+    root.bind_class('Text', '<MouseWheel>', text_wheel)
+
+
+def hide(w):
+    w.pack_forget()
+    m = w.master
+    if not any(c.winfo_manager() for c in m.winfo_children()):
+        m.configure(height=1)
+
+
+def text_scroll(w, delta):
+    n = -int(delta / 120) * 4 if abs(delta) >= 120 else (-4 if delta > 0 else 4)
+    top, bot = w.yview()
+    if (n < 0 and top > 0) or (n > 0 and bot < 1):
+        w.yview_scroll(n, 'units')
+        return True
+    return False
+
+
+def text_wheel(e):
+    return 'break' if text_scroll(e.widget, e.delta) else None
 
 
 class ScrollFrame(ttk.Frame):
@@ -151,6 +175,9 @@ class ScrollFrame(ttk.Frame):
         self.canvas.unbind_all('<Button-5>')
 
     def _wheel(self, e):
+        w = self.winfo_containing(e.x_root, e.y_root)
+        if isinstance(w, tk.Text) and w is not e.widget and text_scroll(w, e.delta):
+            return
         self.canvas.yview_scroll(-1 * int(e.delta / 120) if abs(e.delta) >= 120 else (-1 if e.delta > 0 else 1), 'units')
 
 
@@ -444,7 +471,7 @@ class ColourPicker(tk.Toplevel):
         fr = ttk.Frame(parent)
         fr.grid(row=row, column=1, sticky='w', pady=(6, 0))
         if not cols:
-            ttk.Label(fr, text='\u2013', style='Dim.TLabel').pack(side='left')
+            ttk.Label(fr, text='-', style='Dim.TLabel').pack(side='left')
         for c in cols[:14]:
             c = [int(round(float(v))) for v in c][:3]
             lab = tk.Label(fr, bg=hexcol(c), width=2, relief='solid', bd=1, cursor='hand2')
@@ -722,6 +749,8 @@ class ListEditor:
         sp = ttk.Spinbox(parent, textvariable=var, from_=f['lo'], to=f['hi'], increment=f['inc'], width=f['width'], format=fmt)
 
         def commit(_e=None, var=var):
+            if var.get().strip() == fmt % f['get'](item):
+                return
             try:
                 v = float(var.get().replace(',', '.'))
             except ValueError:
@@ -936,8 +965,9 @@ class SampleWin(tk.Toplevel):
 
 class ExportDialog(tk.Toplevel):
     KINDS = (('height', 'Height map'), ('heightfine', 'Fine height map'), ('color', 'Colour map'),
-             ('normal', 'Normal map'), ('emissive', 'Emissive map (glow)'), ('preview', 'Preview sheet'), ('config', 'Kopernicus config'),
-             ('atmo', 'Scatterer config'), ('clouds', 'Clouds (EVE + TVC)'), ('aurora', 'Aurora (EVE)'), ('ring', 'Ring texture'))
+             ('normal', 'Normal map'), ('emissive', 'Emissive map (glow)'), ('biomes', 'Biome map'), ('preview', 'Preview sheet'), ('config', 'Kopernicus config'),
+             ('atmo', 'Scatterer config'), ('clouds', 'Clouds (EVE + TVC)'), ('aurora', 'Aurora (EVE)'), ('ring', 'Ring texture'),
+             ('hazard', 'Hazard map'))
     SIZES = ['Same as build', '8192 × 4096', '4096 × 2048', '2048 × 1024', '1024 × 512']
 
     def __init__(self, app, builds):
@@ -947,7 +977,7 @@ class ExportDialog(tk.Toplevel):
         self.name = self.P['name']
         self.builds = builds
         self.S = load_settings()
-        self.title('Export – %s' % self.name)
+        self.title('Export - %s' % self.name)
         self.configure(bg=BG)
         self.transient(app)
         self.resizable(False, False)
@@ -970,11 +1000,12 @@ class ExportDialog(tk.Toplevel):
         ttk.Label(f, text='File name', style='Dim.TLabel').grid(row=3, column=1, sticky='w', pady=(12, 2))
         ttk.Label(f, text='Format', style='Dim.TLabel').grid(row=3, column=2, sticky='w', pady=(12, 2))
         self.rows = {}
-        defaults = {'height': True, 'heightfine': True, 'color': True, 'normal': True, 'preview': False, 'config': True, 'atmo': True, 'aurora': True, 'emissive': True, 'clouds': True, 'ring': True}
+        defaults = {'height': True, 'heightfine': True, 'color': True, 'normal': True, 'preview': False, 'config': True, 'atmo': True, 'aurora': True, 'emissive': True, 'clouds': True, 'ring': True, 'biomes': True, 'hazard': True}
         hstem = self.stem('height')
         names = {'height': hstem, 'heightfine': hstem + 'fine', 'color': self.stem('color'), 'normal': self.stem('normal'),
                  'preview': self.name + '_preview', 'config': self.name + '_kopernicus', 'atmo': self.name + '_atmo',
-                 'aurora': self.name + '_aurora', 'emissive': self.stem('emissive'), 'clouds': self.name, 'ring': self.name + '_ring'}
+                 'aurora': self.name + '_aurora', 'emissive': self.stem('emissive'), 'clouds': self.name, 'ring': self.name + '_ring',
+                 'biomes': self.name + '_biomes', 'hazard': self.name + '_hazard'}
         for i, (k, lab) in enumerate(self.KINDS):
             on = tk.BooleanVar(value=self.S.get('on_' + k, defaults[k]))
             chk = ttk.Checkbutton(f, text=lab, variable=on)
@@ -1009,7 +1040,10 @@ class ExportDialog(tk.Toplevel):
                           'Scatterer to draw the planet. The emissive map is the lava glow; the Kopernicus config adds it '
                           'as VertexColorMapEmissive (Lt_Duckweed’s 001_DuckweedUtils). The aurora is two textures (<name> and <name>_top) plus an EVE '
                           'config (<name>.cfg) with the layers; its size is set on the Aurora tab. The ring texture is a '
-                          'strip with alpha; the Kopernicus config then also gets the Rings node.',
+                          'strip with alpha; the Kopernicus config then also gets the Rings node. The biome map has the '
+                          'biomes from Biome maps... (or simple ones from the heights if you have not made any); as a '
+                          'DDS it keeps its exact colours in an 8-bit palette (opens in GIMP too), and the Kopernicus config then gets '
+                          'biomeMap and the Biomes node. The hazard map (Lava tab) is a greyscale heat map for Kopernicus’ HazardousBody; the Kopernicus config then gets the HazardousBody node.',
                   style='Dim.TLabel', wraplength=640, justify='left').grid(row=r + 2, column=0, columnspan=4, sticky='w', pady=(8, 0))
         self.stat = ttk.Label(f, text='', style='Dim.TLabel', wraplength=640, justify='left')
         self.stat.grid(row=r + 3, column=0, columnspan=4, sticky='w', pady=(10, 0))
@@ -1043,7 +1077,8 @@ class ExportDialog(tk.Toplevel):
         src = self.src()
         has = {'preview': os.path.isfile(os.path.join(src, self.name + '_preview.png')), 'atmo': tr.has_atmo(self.P),
                'aurora': tr.has_aurora(self.P), 'clouds': tr.has_clouds(self.P), 'emissive': os.path.isfile(os.path.join(src, self.name + '_emissive.png')),
-               'ring': tr.has_rings(self.P) and os.path.isfile(os.path.join(src, self.name + '_ring.png'))}
+               'ring': tr.has_rings(self.P) and os.path.isfile(os.path.join(src, self.name + '_ring.png')),
+               'hazard': hazard.has(self.P)}
         for k, (on, chk, v_name, v_fmt, note) in self.rows.items():
             if has.get(k, True):
                 chk.state(['!disabled'])
@@ -1052,9 +1087,10 @@ class ExportDialog(tk.Toplevel):
                 on.set(False)
                 chk.state(['disabled'])
                 note.configure(text={'atmo': 'no atmosphere', 'aurora': 'no aurora', 'clouds': 'no clouds', 'emissive': 'nothing glows in this build',
-                                     'ring': 'no rings in this build' if tr.has_rings(self.P) else 'no rings'}.get(k, 'not in this build'))
+                                     'ring': 'no rings in this build' if tr.has_rings(self.P) else 'no rings',
+                                     'hazard': 'Hazard map is off (Lava tab)'}.get(k, 'not in this build'))
         st = self.app.is_stale(self.res())
-        self.stat.configure(text='Note: the settings changed after this build – the export shows the build, not the new settings.' if st else '')
+        self.stat.configure(text='Note: the settings changed after this build - the export shows the build, not the new settings.' if st else '')
 
     def browse(self):
         d = filedialog.askdirectory(parent=self, title='Export to folder', initialdir=self.v_dir.get() if os.path.isdir(self.v_dir.get()) else tr.TOOL)
@@ -1260,6 +1296,7 @@ class App(tk.Tk):
         ttk.Button(top, text='Save', command=lambda: self.save()).pack(side='left', padx=2)
         ttk.Button(top, text='Save as…', command=self.save_as).pack(side='left', padx=2)
         ttk.Button(top, text='Open output folder', command=self.open_out).pack(side='right')
+        ttk.Button(top, text='Biome maps\u2026', command=self.open_biomes).pack(side='right', padx=6)
         self.undo_btn = ttk.Button(top, text='Undo', command=self.undo, state='disabled')
         self.undo_btn.pack(side='left', padx=(18, 2))
         ttk.Button(top, text='Surprise me', command=lambda: self.randomize('all')).pack(side='left', padx=2)
@@ -1283,6 +1320,7 @@ class App(tk.Tk):
         self.tab_aurora()
         self.tab_rings()
         self.tab_body()
+        self.cfg_tab = kopmod_ui.ConfigTab(self, sys.modules[__name__], tr, kind='planet')
         vb = ttk.Frame(right)
         vb.pack(fill='x')
         self.export_btn = ttk.Button(vb, text='Export…', command=self.export)
@@ -1435,7 +1473,7 @@ class App(tk.Tk):
         self.note(p, 'Water runs downhill from every bit of land, gathers into rivers and ends in the sea (or the lowest '
                      'basins on a dry world). Rivers cut a channel and a valley around it. The network is worked out '
                      'on a 512 × 256 version of the planet, so it stays the same at every build size; changing the '
-                     'shape or relief re-routes it (about 1–2 s).')
+                     'shape or relief re-routes it (about 1-2 s).')
         g = self.grid_box(p)
         Slider(self, g, 0, 'Rivers', ('water', 'rivers'), 0, 1, 0.02, tip='0 = none, low = only the big rivers, high = many small streams too')
         Slider(self, g, 2, 'River width (km)', ('water', 'width'), 0.2, 60, 0.1, tip='at the source; rivers get wider downstream')
@@ -1511,6 +1549,21 @@ class App(tk.Tk):
         var = tk.StringVar()
         names = [n for _, n in options]
         cb = ttk.Combobox(parent, textvariable=var, values=names, width=16, state='readonly')
+        cb.grid(row=row, column=1, sticky='w', pady=(4, 0))
+
+        def sel(_e=None):
+            v = dict((n, k) for k, n in options).get(var.get())
+            if v is not None and v != getp(self.P, path):
+                self.snapshot()
+                setp(self.P, path, v)
+                self.changed()
+        cb.bind('<<ComboboxSelected>>', sel)
+        self.combos.append((var, path, dict(options)))
+
+    def wide_combo(self, parent, row, label, path, options, width):
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky='w', padx=(8, 8), pady=(4, 0))
+        var = tk.StringVar()
+        cb = ttk.Combobox(parent, textvariable=var, values=[n for _, n in options], width=width, state='readonly')
         cb.grid(row=row, column=1, sticky='w', pady=(4, 0))
 
         def sel(_e=None):
@@ -1681,7 +1734,7 @@ class App(tk.Tk):
             if not e['enabled']:
                 img = Image.blend(img, Image.new('RGB', img.size, (13, 15, 20)), 0.55)
                 d = ImageDraw.Draw(img)
-                d.text((12, 10), 'Rings are off – tick “This planet has rings”', fill=(220, 225, 235), font=sheet_font(15))
+                d.text((12, 10), 'Rings are off - tick “This planet has rings”', fill=(220, 225, 235), font=sheet_font(15))
             self.ring_img = ImageTk.PhotoImage(img)
             self.ring_cv.delete('all')
             self.ring_cv.create_image(0, 0, image=self.ring_img, anchor='nw')
@@ -1865,6 +1918,81 @@ class App(tk.Tk):
         Slider(self, g, 4, 'Plate glow', A + ('glow',), 0, 2, 0.01,
                tip='brightness of the lava plates in the emissive map (VertexColorMapEmissive, Additive)')
 
+        self.section(p, 'Hazard map (deadly heat)')
+        self.note(p, 'Makes the lava, or a deadly sea (acid, molten metal, anything), hurt craft: Kopernicus’ HazardousBody '
+                     'heats every vessel near it towards the temperature below. Export writes a greyscale heat map '
+                     '(<name>_hazard.dds, white = full heat) and the Kopernicus config gets the HazardousBody node with the '
+                     'map and a height curve, so the heat fades out above the hot ground.')
+        self.check(p, 'Hazard map', ('hazard', 'enabled')).pack(anchor='w')
+        g = self.grid_box(p)
+        self.wide_combo(g, 0, 'What is deadly', ('hazard', 'source'), list(hazard.SOURCES), 34)
+        Slider(self, g, 1, 'Temperature (K)', ('hazard', 'temp'), 100, 5000, 10,
+               tip='ambientTemp: craft are heated towards this; most parts burn up somewhere between 1200 and 2500 K')
+        Slider(self, g, 3, 'Heat spreads (km)', ('hazard', 'spread_km'), 0, 200, 0.5, tip='how far beyond the edge it is still hot')
+        Slider(self, g, 5, 'Heat reaches up (m)', ('hazard', 'reach'), 10, 100000, 10,
+               tip='above the highest hot ground the heat fades to nothing at this height')
+        self.combo(g, 7, 'Map size', ('hazard', 'size'), [(s, '%d × %d' % (s, s // 2)) for s in hazard.SIZES])
+        self.check(p, 'The rivers carry it too (Landforms tab: water rivers for a deadly sea, lava rivers for lava)', ('hazard', 'rivers')).pack(anchor='w', pady=(6, 0))
+        self.check(p, 'Add the heat to other heat (sumTemp) instead of taking the hottest', ('hazard', 'sum')).pack(anchor='w', pady=(6, 0))
+        self.hz_cv = tk.Canvas(p, width=560, height=280, bg='#0d0f14', highlightthickness=1, highlightbackground=LINE)
+        self.hz_cv.pack(anchor='w', pady=(8, 4))
+        self.hz_sum = ttk.Label(p, text='', style='Dim.TLabel', wraplength=540, justify='left')
+        self.hz_sum.pack(anchor='w', pady=(0, 12))
+        self.lava_tab = sf
+        self.nb.bind('<<NotebookTabChanged>>', lambda e: self.hz_schedule(10), add='+')
+
+    def hz_schedule(self, delay=300):
+        try:
+            if not hasattr(self, 'hz_cv') or self.nb.select() != str(self.lava_tab):
+                return
+        except tk.TclError:
+            return
+        if getattr(self, 'hz_after', None):
+            self.after_cancel(self.hz_after)
+        self.hz_after = self.after(delay, self.hz_draw)
+
+    def hz_draw(self):
+        self.hz_after = None
+        self.hz_cv.delete('all')
+        P = tr.normalize(copy.deepcopy(self.P))
+        L = self.live_last
+        if L is not None:
+            h, col, em, what, Pr = L['hm'], L['col'], L.get('em'), 'live preview', P
+        else:
+            b = tr.kop_build(self.P)
+            if not b:
+                self.hz_cv.create_text(280, 140, text='Turn on Live preview once or press Build to see the heat map here', fill=DIM)
+                self.hz_sum.configure(text='')
+                return
+            try:
+                h, em = hazard.load_build(tr, b, self.P['name'])
+                col = np.asarray(Image.open(os.path.join(b, self.P['name'] + '_color.png')).convert('RGB'))
+            except Exception as ex:
+                self.hz_cv.create_text(280, 140, text='Could not read the build: %s' % ex, fill=DIM)
+                return
+            what = 'last build'
+            Pr = tr.bio_built(P, b)
+        try:
+            hmap, hs, m = hazard.heat_map(tr, P, h, em, 512, Pr)
+            riv = ' with the rivers' if hazard.rivers_used(tr, P, Pr) and hazard.source(tr, P) != 'rivers' else ''
+            lo, top = hazard.heights(tr, P, hs, m)
+            img = Image.fromarray(hazard.overlay(col, hmap)).resize((560, 280), Image.LANCZOS)
+            if not hazard.has(P):
+                img = Image.blend(img, Image.new('RGB', img.size, (13, 15, 20)), 0.45)
+                ImageDraw.Draw(img).text((12, 10), 'Hazard map is off', fill=(220, 225, 235), font=sheet_font(15))
+            self.hz_img = ImageTk.PhotoImage(img)
+            self.hz_cv.create_image(0, 0, image=self.hz_img, anchor='nw')
+            e = hazard.entry(P.get('hazard'))
+            sh = hazard.share(hmap)
+            if sh <= 0:
+                txt = 'From the %s: nothing is deadly with these settings (%s).' % (what, dict(hazard.SOURCES)[hazard.source(tr, P)].lower())
+            else:
+                txt = ('From the %s: %s, %.1f%% of the planet. Craft are heated towards %g K up to %.0f m, fading out by %.0f m.'
+                       % (what, dict(hazard.SOURCES)[hazard.source(tr, P)].split(' (')[0].lower() + riv, 100 * sh, e['temp'], top, top + e['reach']))
+            self.hz_sum.configure(text=txt)
+        except Exception as ex:
+            self.hz_cv.create_text(280, 140, text='Could not draw the heat map: %s' % ex, fill=DIM)
+
     def tab_colours(self):
         sf = ScrollFrame(self.nb)
         self.nb.add(sf, text='Colours')
@@ -1915,7 +2043,6 @@ class App(tk.Tk):
         Slider(self, g, 9, 'No snow on slopes over (°)', ('colors', 'snow_slope'), 5, 90, 0.5)
         self.swatch_row(p, [('Ice colour', ('colors', 'ice'))])
         self.section(p, 'Water')
-        self.note(p, 'Only used with an ocean.')
         g = self.grid_box(p)
         Slider(self, g, 0, 'Deep colour from (m)', ('colors', 'water_depth'), 20, 5000, 10, tip='how deep the water must be to show the full deep colour')
         self.swatch_row(p, [('Shallow', ('colors', 'shallow')), ('Deep', ('colors', 'deep'))])
@@ -1954,11 +2081,13 @@ class App(tk.Tk):
                          num('Longitude', 'lon', 0, 360, 0.5, '%.1f'),
                          num('Size (km)', 'size', 1, 5000, 5, '%.0f'),
                          num('Height or depth (m)', 'height', 0, 30000, 100, '%.0f', width=8),
-                         num('Fresh', 'fresh', 0, 1, 0.05, '%.2f', width=5)],
+                         num('Fresh', 'fresh', 0, 1, 0.05, '%.2f', width=5),
+                         num('Central peak', 'peak', 0, 1, 0.05, '%.2f', default=1.0, width=5)],
                         self.new_feature, card=True, cols=3, add_text='Add feature', notify=self.changed)
         ed.frame.pack(fill='x', pady=6)
         self.feat_ed = ed
         self.note(p, 'Fresh: for craters and basins, 1 = sharp and young with bright ejecta, 0 = old and worn down. '
+                     'Central peak: the knob in the middle of craters wider than 20 km, 1 = full height, 0 = none. '
                      'A plateau rises by its height above the ground around it, with a flat top and steep, ragged edges.')
 
     def new_feature(self):
@@ -1968,12 +2097,12 @@ class App(tk.Tk):
         f['lat'] = round(max(-60.0, min(60.0, float(self.P['preview']['view_lat']) + self.rot[1])), 1)
         return f
 
-    ATMO_TIPS = {'HR': 'HR – how fast the air thins out with height (km)',
-                 'HM': 'HM – how fast the haze thins out with height (km)',
-                 'm_mieG': 'm_mieG – how strongly the haze glows when you look towards the sun',
-                 'atmosphereStartRadiusScale': 'atmosphereStartRadiusScale – below 1 the air starts under the ground',
-                 'averageGroundReflectance': 'averageGroundReflectance – light bounced back up from the ground',
-                 'godrayStrength': 'godrayStrength – only in game, not in this preview'}
+    ATMO_TIPS = {'HR': 'HR - how fast the air thins out with height (km)',
+                 'HM': 'HM - how fast the haze thins out with height (km)',
+                 'm_mieG': 'm_mieG - how strongly the haze glows when you look towards the sun',
+                 'atmosphereStartRadiusScale': 'atmosphereStartRadiusScale - below 1 the air starts under the ground',
+                 'averageGroundReflectance': 'averageGroundReflectance - light bounced back up from the ground',
+                 'godrayStrength': 'godrayStrength - only in game, not in this preview'}
     TINT = 'The planet’s colours'
 
     def tab_atmo(self):
@@ -2025,7 +2154,7 @@ class App(tk.Tk):
         g = self.grid_box(p)
         Slider(self, g, 0, 'Air starts at (× radius)', A + ('atmosphereStartRadiusScale',), 0.95, 1.05, 0.001,
                tip=self.ATMO_TIPS['atmosphereStartRadiusScale'])
-        self.section(p, 'Rayleigh scattering – the colour of the sky')
+        self.section(p, 'Rayleigh scattering - the colour of the sky')
         self.note(p, 'm_betaR: how strongly the air scatters red, green and blue. Bigger = thicker, brighter air.')
         g = self.grid_box(p)
         Slider(self, g, 0, 'Scale height (km)', A + ('HR',), 0.05, 100, 0.01, tip=self.ATMO_TIPS['HR'])
@@ -2038,7 +2167,7 @@ class App(tk.Tk):
         self.atmo_sky_sw.bind('<Button-1>', lambda e: self.atmo_pick_colour('m_betaR'))
         ttk.Button(cr, text='Sky colour…', command=lambda: self.atmo_pick_colour('m_betaR')).pack(side='left')
         ttk.Button(cr, text='Match the planet', command=self.atmo_match).pack(side='left', padx=6)
-        self.section(p, 'Mie scattering – haze')
+        self.section(p, 'Mie scattering - haze')
         self.note(p, 'BETA_MSca: how much haze or dust there is, for red, green and blue.')
         g = self.grid_box(p)
         Slider(self, g, 0, 'Scale height (km)', A + ('HM',), 0.02, 60, 0.01, tip=self.ATMO_TIPS['HM'])
@@ -2054,30 +2183,30 @@ class App(tk.Tk):
         ttk.Button(cr, text='Grey haze', command=self.atmo_grey_haze).pack(side='left', padx=6)
         self.section(p, 'Absorbing layer (ozone)')
         self.atmo_oz = tk.BooleanVar(value=False)
-        ttk.Checkbutton(p, text='useOzone – a layer that swallows some colours (ozone, methane…)', variable=self.atmo_oz,
+        ttk.Checkbutton(p, text='useOzone - a layer that swallows some colours (ozone, methane…)', variable=self.atmo_oz,
                         command=lambda: self.atmo_flag('useOzone', self.atmo_oz)).pack(anchor='w', padx=(8, 0))
         g = self.grid_box(p)
         for i, c in enumerate(('Red', 'Green', 'Blue')):
             Slider(self, g, i, 'Absorbs ' + c.lower(), A + ('ozoneAbsorption', i), 0, 0.01, 0.000001)
-        Slider(self, g, 3, 'Height (km)', A + ('ozoneHeight',), 0, 300, 0.5, tip='ozoneHeight – the middle of the layer')
+        Slider(self, g, 3, 'Height (km)', A + ('ozoneHeight',), 0, 300, 0.5, tip='ozoneHeight - the middle of the layer')
         Slider(self, g, 5, 'Half thickness (km)', A + ('ozoneFalloff',), 0.5, 200, 0.5, tip='ozoneFalloff')
         self.section(p, 'Light')
         g = self.grid_box(p)
         Slider(self, g, 0, 'Light from below', A + ('averageGroundReflectance',), 0, 1, 0.01, tip=self.ATMO_TIPS['averageGroundReflectance'])
         Slider(self, g, 2, 'Godrays', A + ('godrayStrength',), 0, 1, 0.05, tip=self.ATMO_TIPS['godrayStrength'])
         self.atmo_ms = tk.BooleanVar(value=True)
-        ttk.Checkbutton(p, text='multipleScattering – light that bounces around more than once (softer, brighter)',
+        ttk.Checkbutton(p, text='multipleScattering - light that bounces around more than once (softer, brighter)',
                         variable=self.atmo_ms, command=lambda: self.atmo_flag('multipleScattering', self.atmo_ms)).pack(anchor='w', padx=(8, 0), pady=(4, 0))
         self.section(p, 'Seen from orbit (the last config point)')
         g = self.grid_box(p)
         L = A + ('configPoints', -1)
         for i, (k, lab, lo, hi, st, tip) in enumerate((
-                ('skyExposure', 'Sky brightness', 0.005, 1.0, 0.005, 'skyExposure – the glow around the planet'),
-                ('scatteringExposure', 'Haze over the planet', 0.005, 1.0, 0.005, 'scatteringExposure – the light the air adds over the ground'),
-                ('extinctionThickness', 'Shade from the air', 0, 1.5, 0.01, 'extinctionThickness – how much the air darkens the ground below'),
-                ('extinctionTint', 'Coloured shade', 0, 1, 0.01, 'extinctionTint – 0 = grey, 1 = in the colours of the air'),
+                ('skyExposure', 'Sky brightness', 0.005, 1.0, 0.005, 'skyExposure - the glow around the planet'),
+                ('scatteringExposure', 'Haze over the planet', 0.005, 1.0, 0.005, 'scatteringExposure - the light the air adds over the ground'),
+                ('extinctionThickness', 'Shade from the air', 0, 1.5, 0.01, 'extinctionThickness - how much the air darkens the ground below'),
+                ('extinctionTint', 'Coloured shade', 0, 1, 0.01, 'extinctionTint - 0 = grey, 1 = in the colours of the air'),
                 ('skyAlpha', 'Sky opacity', 0, 1, 0.01, 'skyAlpha'),
-                ('skyExtinctionTint', 'Sky shade colour', 0, 1, 0.01, 'skyExtinctionTint – tints the stars behind the air; not in the picture'))):
+                ('skyExtinctionTint', 'Sky shade colour', 0, 1, 0.01, 'skyExtinctionTint - tints the stars behind the air; not in the picture'))):
             Slider(self, g, i * 2, lab, L + (k,), lo, hi, st, tip=tip, notify=self.atmo_point_changed)
         self.section(p, 'Config points')
         self.note(p, 'Scatterer blends between these by the camera’s height above the ground (in metres). Below the first '
@@ -2126,14 +2255,14 @@ class App(tk.Tk):
         self.atmo_extra.pack(anchor='w', pady=(4, 0))
         self.atmo_extra.bind('<FocusOut>', self.atmo_commit_extra)
         self.section(p, 'Scatterer config')
-        self.note(p, 'atmo.cfg – goes into GameData/<your mod>/Scatterer/Planets/<planet>/ (any .cfg name works):')
+        self.note(p, 'atmo.cfg - goes into GameData/<your mod>/Scatterer/Planets/<planet>/ (any .cfg name works):')
         self.atmo_cfg = tk.Text(p, height=14, width=64, bg=FIELD, fg=FG, insertbackground=FG, relief='flat', font=(MONO, 9), tabs=('0.9c',))
         self.atmo_cfg.pack(anchor='w', pady=(4, 0))
         br = ttk.Frame(p)
         br.pack(fill='x', pady=(6, 0))
         ttk.Button(br, text='Copy', command=lambda: self.atmo_copy('atmo')).pack(side='left')
         ttk.Button(br, text='Save atmo.cfg…', command=self.atmo_save).pack(side='left', padx=6)
-        ttk.Label(p, text='Planet list entry – Scatterer only draws planets that are in its list:',
+        ttk.Label(p, text='Planet list entry - Scatterer only draws planets that are in its list:',
                   style='Dim.TLabel', wraplength=540).pack(anchor='w', pady=(10, 0))
         self.atmo_pl = tk.Text(p, height=12, width=64, bg=FIELD, fg=FG, insertbackground=FG, relief='flat', font=(MONO, 9), tabs=('0.9c',))
         self.atmo_pl.pack(anchor='w', pady=(4, 0))
@@ -2291,7 +2420,7 @@ class App(tk.Tk):
         fit = bool(self.atmo_fit.get())
         if name in tr.ATMO_PRESETS:
             return tr.atmo_preset(name, R, fit)
-        v = tr.atmo_preset('Kerbin (stock)' if self.P['shape']['ocean'] else 'Duna (stock)', R, fit)
+        v = tr.atmo_preset('Kerbin (stock)' if tr.has_liquid(self.P) else 'Duna (stock)', R, fit)
         v['m_betaR'] = tr.beta_from_colour(self.planet_tint(), v['m_betaR'])
         return v
 
@@ -2304,7 +2433,7 @@ class App(tk.Tk):
         self.atmo_refresh()
         self.refresh_atmo_sliders()
         self.changed()
-        self.status('Atmosphere values from “%s” – Undo goes back' % name)
+        self.status('Atmosphere values from “%s” - Undo goes back' % name)
 
     def atmo_fresh(self):
         e = dict(self.atmo_e())
@@ -2322,10 +2451,10 @@ class App(tk.Tk):
                                              % (self.P['name'], tr.nice(found)), parent=self):
                 self.atmo_read_file(found)
             else:
-                name = 'Kerbin (stock)' if self.P['shape']['ocean'] else self.TINT
+                name = 'Kerbin (stock)' if tr.has_liquid(self.P) else self.TINT
                 self.atmo_preset.set(name)
                 e.update(self.atmo_values(name))
-                e['flat_model'] = bool(self.P['shape']['ocean'])
+                e['flat_model'] = tr.has_liquid(self.P)
                 self.P['atmosphere'] = tr.atmo_entry(e)
             self.atmo_refresh()
             self.refresh_atmo_sliders()
@@ -2439,7 +2568,7 @@ class App(tk.Tk):
             r2 = os.path.dirname(r2)
         item, where = tr.find_planets_item(name, root)
         if item:
-            msg += ' – %s is already in the planet list (%s)' % (name, os.path.basename(where))
+            msg += ' - %s is already in the planet list (%s)' % (name, os.path.basename(where))
         else:
             pl = tr.planets_file(root, name)
             if messagebox.askyesno('Planet list', 'Scatterer only draws planets that are in its planet list, and %s isn’t '
@@ -2861,7 +2990,7 @@ class App(tk.Tk):
         if not tr.has_aurora(self.P):
             self.view_src = None
             if not self.proc:
-                self.status('No aurora yet – tick “Aurora” on the Aurora tab')
+                self.status('No aurora yet - tick “Aurora” on the Aurora tab')
         else:
             self.aurora_request()
             self.view_src = self.aur_img
@@ -3127,7 +3256,7 @@ class App(tk.Tk):
         if not tr.has_clouds(self.P):
             self.view_src = None
             if not self.proc:
-                self.status('No clouds yet – tick “Volumetric clouds” on the Clouds tab')
+                self.status('No clouds yet - tick “Volumetric clouds” on the Clouds tab')
         else:
             self.clouds_request()
             self.view_src = self.cl_img
@@ -3364,7 +3493,7 @@ class App(tk.Tk):
             r['gaps'] = sorted(gaps)
         self.refresh_all()
         self.changed(snap=False)
-        msg = 'Randomized %s – Undo goes back' % ('everything' if what == 'all' else what)
+        msg = 'Randomized %s - Undo goes back' % ('everything' if what == 'all' else what)
         self.after(300, lambda: self.status(msg))
 
     def volcano_seed(self):
@@ -3389,7 +3518,7 @@ class App(tk.Tk):
             self.status('Place features: click the map or the globe to add a %s, drag to move, right-click to remove'
                         % self.feat_type.get().lower())
         else:
-            self.status('Live preview – press Build for the full-size maps')
+            self.status('Live preview - press Build for the full-size maps')
         self.redraw()
 
     def placing(self):
@@ -3434,7 +3563,7 @@ class App(tk.Tk):
         self.feat_ed.rebuild()
         self.changed()
         self.redraw()
-        self.status('Removed a %s – Undo brings it back' % kind)
+        self.status('Removed a %s - Undo brings it back' % kind)
 
     def feature_marks(self):
         if self.view_geom is None:
@@ -3473,6 +3602,8 @@ class App(tk.Tk):
         self.changed()
 
     def refresh_all(self):
+        if hasattr(self, 'cfg_tab'):
+            self.cfg_tab.refresh()
         for s in self.sliders:
             s.refresh()
         for e in self.editors:
@@ -3505,7 +3636,7 @@ class App(tk.Tk):
         self.res_info.configure(text=txt)
 
     def update_title(self):
-        self.title('%s %s – %s%s' % (tr.APP_NAME, tr.APP_VERSION, self.P['name'], ' *' if self.dirty else ''))
+        self.title('%s %s - %s%s' % (tr.APP_NAME, tr.APP_VERSION, self.P['name'], ' *' if self.dirty else ''))
 
     def changed(self, snap=None):
         self.dirty = True
@@ -3519,6 +3650,8 @@ class App(tk.Tk):
             self.clouds_dirty()
         if hasattr(self, 'ring_cv'):
             self.ring_schedule()
+        if hasattr(self, 'hz_cv'):
+            self.hz_schedule()
         if self.view.get() in ('live', 'atmo', 'aurora', 'clouds'):
             if self.pending:
                 self.after_cancel(self.pending)
@@ -3687,6 +3820,13 @@ class App(tk.Tk):
         n = self.P['name']
         return os.path.join(tr.OUTROOT, n if res == 4096 else '%s_%d' % (n, res))
 
+    def open_biomes(self):
+        for w in self.winfo_children():
+            if isinstance(w, biomemaker_ui.BiomeWindow):
+                w.lift()
+                return
+        biomemaker_ui.BiomeWindow(self, sys.modules[__name__], tr)
+
     def open_out(self):
         d = self.out_path()
         if not os.path.isdir(d):
@@ -3703,18 +3843,18 @@ class App(tk.Tk):
                 built = tr.normalize(json.load(fh))
         except Exception:
             return None
-        a = {k: v for k, v in built.items() if k not in ('atmosphere', 'aurora', 'clouds')}
-        b = {k: v for k, v in tr.normalize(copy.deepcopy(self.P)).items() if k not in ('atmosphere', 'aurora', 'clouds')}
+        a = {k: v for k, v in built.items() if k not in ('atmosphere', 'aurora', 'clouds', 'planet', 'biome_map', 'spve', 'hazard')}
+        b = {k: v for k, v in tr.normalize(copy.deepcopy(self.P)).items() if k not in ('atmosphere', 'aurora', 'clouds', 'planet', 'biome_map', 'spve', 'hazard')}
         return json.dumps(a, sort_keys=True) != json.dumps(b, sort_keys=True)
 
     def update_stale(self):
         if self.proc:
             return
         if self.view.get() in ('preview', 'flat') and self.is_stale():
-            self.status('Settings changed since this build – press Build to update')
+            self.status('Settings changed since this build - press Build to update')
 
     def live_key(self):
-        return json.dumps({k: v for k, v in self.P.items() if k not in ('atmosphere', 'rings')}, sort_keys=True, default=str)
+        return json.dumps({k: v for k, v in self.P.items() if k not in ('atmosphere', 'rings', 'planet', 'biome_map', 'spve', 'hazard')}, sort_keys=True, default=str)
 
     def update_view(self, from_live=False):
         self.pending = None
@@ -3734,7 +3874,7 @@ class App(tk.Tk):
             if not self.ingame_any():
                 self.view_src = None
                 if not self.proc:
-                    self.status('Nothing to show yet – tick an atmosphere, clouds or an aurora (or add glowing lava)')
+                    self.status('Nothing to show yet - tick an atmosphere, clouds or an aurora (or add glowing lava)')
             else:
                 self.atmo_request()
                 self.view_src = self.atmo_img
@@ -3794,7 +3934,7 @@ class App(tk.Tk):
                 self.view_src = None
                 self.live_view = None
             if not self.proc and not self.place_mode.get():
-                self.status('Live preview – press Build for the full-size maps')
+                self.status('Live preview - press Build for the full-size maps')
             if not from_live:
                 self.request_live(key)
             self.update_live_label(key)
@@ -3808,12 +3948,12 @@ class App(tk.Tk):
                 except Exception:
                     self.view_src = None
                 if not self.proc:
-                    self.status('Settings changed since this build – press Build to update' if self.is_stale()
+                    self.status('Settings changed since this build - press Build to update' if self.is_stale()
                                 else 'Showing build at %s' % self.res.get())
             else:
                 self.view_src = None
                 if not self.proc:
-                    self.status('Nothing built at %s yet – press Build' % self.res.get())
+                    self.status('Nothing built at %s yet - press Build' % self.res.get())
         self.update_export_state()
         self.redraw()
 
@@ -3892,7 +4032,7 @@ class App(tk.Tk):
                 self.P['features'].append(f)
                 i = len(self.P['features']) - 1
                 self.fdrag = [i, True]
-                self.status('Added a %s at %.1f°, %.1f° – drag to move it, settings on the Features tab' % (t, f['lat'], f['lon']))
+                self.status('Added a %s at %.1f°, %.1f° - drag to move it, settings on the Features tab' % (t, f['lat'], f['lon']))
             else:
                 self.fdrag = [i, False]
             self.redraw()
@@ -3981,7 +4121,7 @@ class App(tk.Tk):
             if L is not None and L['key'] == key:
                 txt = ('%d px · %.1f s' % (L['W'], L['dt'])) if L['dt'] >= 0.05 else '%d px' % L['W']
                 if L['W'] < self.live_target():
-                    txt += ' – sharpening…'
+                    txt += ' - sharpening…'
             else:
                 txt = 'updating…'
         self.live_lab.configure(text=txt)
@@ -4081,6 +4221,7 @@ class App(tk.Tk):
         except tk.TclError:
             return
         if got:
+            self.hz_schedule()
             if self.view.get() in ('live', 'atmo'):
                 self.update_view(from_live=True)
             else:
@@ -4118,15 +4259,15 @@ class App(tk.Tk):
             self.view_geom = None
             msg = 'Making the preview…' if self.view.get() == 'live' else 'No picture yet'
             if self.view.get() == 'atmo':
-                msg = 'Drawing the planet as in game…' if self.ingame_any() else 'Nothing to show yet – tick an atmosphere, clouds or an aurora'
+                msg = 'Drawing the planet as in game…' if self.ingame_any() else 'Nothing to show yet - tick an atmosphere, clouds or an aurora'
             if self.view.get() == 'clouds':
                 cp = getattr(self, 'cl_prog', None)
                 msg = ('Working out the wind… %d%%' % int(cp[1] * 100) if cp and cp[0] == 'wind' else
                        'Making the clouds… %d%%' % int(cp[1] * 100) if cp else 'Making the clouds…')
                 if not tr.has_clouds(self.P):
-                    msg = 'No clouds – tick “Volumetric clouds” on the Clouds tab'
+                    msg = 'No clouds - tick “Volumetric clouds” on the Clouds tab'
             if self.view.get() == 'aurora':
-                msg = 'Drawing the aurora…' if tr.has_aurora(self.P) else 'No aurora – tick “Aurora” on the Aurora tab'
+                msg = 'Drawing the aurora…' if tr.has_aurora(self.P) else 'No aurora - tick “Aurora” on the Aurora tab'
             self.canvas.create_text(cw // 2, ch // 2, text=msg, fill=DIM, font=(FONT, 12))
             return
         iw, ih = self.view_src.size
@@ -4212,11 +4353,11 @@ class App(tk.Tk):
             if w and w[0] == 'height' and w[-1].endswith('%'):
                 pct = int(w[-1].rstrip('%'))
                 self.prog['value'] = 0.6 * pct
-                self.status('Shaping the ground – %d%%' % pct)
+                self.status('Shaping the ground - %d%%' % pct)
             elif w and w[0] == 'color' and w[-1].endswith('%'):
                 pct = int(w[-1].rstrip('%'))
                 self.prog['value'] = 60 + 0.25 * pct
-                self.status('Colouring – %d%%' % pct)
+                self.status('Colouring - %d%%' % pct)
             elif 'color' in w and 'done' in w:
                 self.prog['value'] = 86
                 self.status('Saving the maps')
@@ -4245,9 +4386,9 @@ class App(tk.Tk):
             self.prog['value'] = 100
             self.view.set('preview')
             self.update_view()
-            self.status('Done – %s at %s' % (self.P['name'], self.res.get()))
+            self.status('Done - %s at %s' % (self.P['name'], self.res.get()))
         else:
-            self.status('Build failed – see the log below')
+            self.status('Build failed - see the log below')
 
     def cancel(self):
         if self.proc:
@@ -4258,7 +4399,7 @@ class App(tk.Tk):
         self.commit_entries()
         b = self.builds()
         if not b:
-            messagebox.showinfo('Build first', 'Press Build first – Export saves the files of a build.', parent=self)
+            messagebox.showinfo('Build first', 'Press Build first - Export saves the files of a build.', parent=self)
             return
         ExportDialog(self, b)
 

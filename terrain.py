@@ -1,11 +1,14 @@
-import sys, os, io, json, copy, time, math, struct, argparse, heapq
+import sys, os, io, json, copy, time, math, struct, argparse, heapq, hashlib
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+import kopmod
+import biomemaker
+import hazard
 Image.MAX_IMAGE_PIXELS = None
 
 APP_NAME = 'Terra Studio'
-APP_VERSION = '0.2.0'
+APP_VERSION = '1.0.0'
 FROZEN = bool(getattr(sys, 'frozen', False))
 TOOL = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 ROOT = os.path.abspath(os.path.join(TOOL, '..', '..'))
@@ -116,7 +119,7 @@ DEFAULTS = {
 HEIGHT_KEYS = ('seed', 'radius', 'shape', 'relief', 'craters', 'volcanoes', 'features', 'plateaus', 'water', 'cracks', 'ridge')
 CRACK_STYLES = ('lines', 'cells')
 FEATURE_TYPES = ('crater', 'basin', 'volcano', 'mountain', 'plateau')
-FEATURE = {'type': 'crater', 'lat': 0.0, 'lon': 180.0, 'size': 120.0, 'height': 0.0, 'fresh': 1.0}
+FEATURE = {'type': 'crater', 'lat': 0.0, 'lon': 180.0, 'size': 120.0, 'height': 0.0, 'fresh': 1.0, 'peak': 1.0}
 
 
 def feature_entry(f):
@@ -124,7 +127,7 @@ def feature_entry(f):
     if isinstance(f, dict):
         e.update({k: v for k, v in f.items() if k in FEATURE})
     e['type'] = str(e['type']).lower() if str(e['type']).lower() in FEATURE_TYPES else 'crater'
-    for k in ('lat', 'lon', 'size', 'height', 'fresh'):
+    for k in ('lat', 'lon', 'size', 'height', 'fresh', 'peak'):
         try:
             e[k] = float(e[k])
         except (TypeError, ValueError):
@@ -133,6 +136,7 @@ def feature_entry(f):
     e['lon'] = e['lon'] % 360.0
     e['size'] = max(1.0, e['size'])
     e['fresh'] = max(0.0, min(1.0, e['fresh']))
+    e['peak'] = max(0.0, min(1.0, e['peak']))
     return e
 
 
@@ -228,6 +232,7 @@ def normalize(P):
     P['lava_ocean'] = lava_ocean_entry(P.get('lava_ocean'))
     P['emission'] = emission_entry(P.get('emission'))
     P['rings'] = ring_entry(P.get('rings'))
+    P['hazard'] = hazard.entry(P.get('hazard'))
     gm = P.pop('gimp', None)
     if isinstance(gm, dict) and 'scale' in gm and 'normal_scale' not in rn:
         P['normal_scale'] = gm['scale']
@@ -733,7 +738,7 @@ def crater_marks(mk, idx, r, sx, sy, sz, c, dot, e_amt, rays, extr, seed, o, flo
         mk[0][idx] = np.maximum(mk[0][idx], e.astype(np.float16))
 
 
-def one_crater(hm, mk, X, Y, Z, W, H, r0, c, Dk, R, deg, depth, e_amt, rays, nid, k, basin=False, depth_m=None):
+def one_crater(hm, mk, X, Y, Z, W, H, r0, c, Dk, R, deg, depth, e_amt, rays, nid, k, basin=False, depth_m=None, peak=1.0):
     Ra = Dk * 500.0 / R
     if Ra * W / (2 * math.pi) < 0.6:
         return
@@ -759,8 +764,8 @@ def one_crater(hm, mk, X, Y, Z, W, H, r0, c, Dk, R, deg, depth, e_amt, rays, nid
         rims = 0.7 * (1 - 0.5 * deg)
         ks = np.float32(0.22 + 0.6 * deg)
         shp = crater_shape(r, np.float32(floor), np.float32(0.7), np.float32(rims), ks)
-        if Dk > 20:
-            shp = shp + np.float32(0.35 * float(ss(20, 60, Dk)) * (1 - 0.5 * deg)) * np.exp(-(r / np.float32(0.22)) ** 2)
+        if Dk > 20 and peak > 0:
+            shp = shp + np.float32(0.35 * float(ss(20, 60, Dk)) * (1 - 0.5 * deg) * peak) * np.exp(-(r / np.float32(0.22)) ** 2)
     if depth_m is None:
         dm = depth * crater_depth_m(Dk) * (1 - 0.65 * deg) / 0.95
     else:
@@ -937,7 +942,7 @@ def apply_features(P, hm, mk, X, Y, Z, W, H, r0, fmax, cancel=None, levels=None)
         if t == 'crater':
             deg = 1 - float(f['fresh'])
             one_crater(hm, mk, X, Y, Z, W, H, r0, c, D, R, deg, 1.0, ejk * (1 - deg), rays, nid, k,
-                       depth_m=(Hm if Hm > 0 else None))
+                       depth_m=(Hm if Hm > 0 else None), peak=float(f.get('peak', 1.0)))
         elif t == 'basin':
             deg = 1 - float(f['fresh'])
             one_crater(hm, mk, X, Y, Z, W, H, r0, c, D, R, deg, 1.0, 0.0, rays, nid, k, basin=True,
@@ -1983,7 +1988,7 @@ def default_feature(t, radius):
     size = round(max(5.0, min(size, {'crater': 300, 'basin': 2500, 'volcano': 700, 'mountain': 800, 'plateau': 1500}[t])))
     height = {'crater': 0.0, 'basin': 0.0, 'volcano': round(min(20000, size * 25) / 100) * 100,
               'mountain': round(min(12000, size * 20) / 100) * 100, 'plateau': round(max(500, min(6000, size * 15)) / 50) * 50}[t]
-    return {'type': t, 'lat': 0.0, 'lon': 180.0, 'size': float(size), 'height': float(height), 'fresh': 1.0 if t == 'crater' else 0.3}
+    return {'type': t, 'lat': 0.0, 'lon': 180.0, 'size': float(size), 'height': float(height), 'fresh': 1.0 if t == 'crater' else 0.3, 'peak': 1.0}
 
 
 def gblur(a, sigma):
@@ -2055,6 +2060,16 @@ def has_lava_ocean(P):
 
 def is_lava_sea(P):
     return has_lava_ocean(P) or (bool(P['shape']['ocean']) and has_flowed(P))
+
+
+def has_liquid(P):
+    return bool(P['shape']['ocean'])
+
+
+def sea_mask(P, h):
+    if not P['shape']['ocean']:
+        return None
+    return h < 0
 
 
 def lava_rivers(P):
@@ -3141,7 +3156,7 @@ def parse_cfg(text):
     root = {'name': '', 'values': [], 'nodes': []}
     stack = [root]
     pending = ''
-    for raw in text.replace('﻿', '').splitlines():
+    for raw in text.replace('ï»¿', '').splitlines():
         line = raw.split('//', 1)[0].strip()
         while line:
             if line[0] == '{':
@@ -4394,6 +4409,7 @@ DDS_BC5 = 'DDS BC5 (two-channel)'
 DDS_L8 = 'DDS L8 (KSP default)'
 PNG16 = 'PNG 16-bit'
 PNG8 = 'PNG 8-bit'
+DDS_PAL = 'DDS 8-bit palette'
 CFG = 'Kopernicus .cfg'
 ATMO_CFG = 'Scatterer cfg'
 CLOUD_FMT = 'EVE + True Volumetric Clouds'
@@ -4410,8 +4426,10 @@ EXPORT_FORMATS = {
     'emissive': [DDS_BC1, DDS_BC7, 'PNG'],
     'clouds': [CLOUD_FMT],
     'ring': [DDS_BC3, DDS_BC7, 'PNG'],
+    'biomes': [DDS_PAL, 'PNG'],
+    'hazard': [DDS_L8, PNG8],
 }
-FMT_EXT = {DDS_BC1: '.dds', DDS_BC3: '.dds', DDS_BC7: '.dds', DDS_NM: '.dds', DDS_BC5: '.dds', DDS_L8: '.dds',
+FMT_EXT = {DDS_BC1: '.dds', DDS_BC3: '.dds', DDS_BC7: '.dds', DDS_NM: '.dds', DDS_BC5: '.dds', DDS_L8: '.dds', DDS_PAL: '.dds',
            PNG16: '.png', PNG8: '.png', 'PNG': '.png', 'JPG': '.jpg', 'TGA': '.tga', 'BMP': '.bmp', CFG: '.cfg', ATMO_CFG: '.cfg', CLOUD_FMT: '_clouds.cfg'}
 PIL_FMT = {'PNG': 'PNG', 'JPG': 'JPEG', 'TGA': 'TGA', 'BMP': 'BMP'}
 
@@ -4461,11 +4479,14 @@ def tex_path(folder, fname, base=None):
     return (rel + '/' if rel else '') + fname
 
 
-def kopernicus_snippet(P, info, files, folder, base=None):
+def kopernicus_snippet(P, info, files, folder, base=None, build=None):
     def col(c):
         return '%.3f,%.3f,%.3f,1' % tuple(v / 255.0 for v in c)
     t = '\t'
     L = []
+    if files.get('biomes'):
+        L += ['Properties', '{', t + 'biomeMap = ' + tex_path(folder, files['biomes'], base)]
+        L += [t + x for x in biomemaker.biomes_text(kop_biomes(P, build, False)[0]).splitlines()] + ['}']
     mods = []
     if files.get('height'):
         mods += [t * 2 + 'VertexHeightMap', t * 2 + '{',
@@ -4523,7 +4544,7 @@ def kopernicus_snippet(P, info, files, folder, base=None):
                   t * 3 + 'map = ' + tex_path(folder, files['emissive'], base), t * 3 + 'brightness = 1',
                   t * 3 + 'order = 9999994', t * 3 + 'enabled = true', t * 2 + '}', t + '}']
         L += ['}']
-    elif P['shape']['ocean']:
+    elif has_liquid(P):
         C = P['colors']
         L += ['Ocean', '{', t + 'ocean = true', t + 'density = 1', t + 'oceanColor = ' + col(C['deep']), '',
               t + 'Material', t + '{', t * 2 + 'color = ' + col(C['shallow']), t * 2 + 'colorFromSpace = ' + col(C['deep']), t + '}', '',
@@ -4531,6 +4552,9 @@ def kopernicus_snippet(P, info, files, folder, base=None):
     out = '\n'.join(L) + '\n'
     if files.get('ring') and has_rings(P):
         out += ring_snippet(P, tex_path(folder, os.path.splitext(files['ring'])[0], base))
+    if files.get('hazard') and hazard.has(P):
+        lo, top = hazard.build_info(sys.modules[__name__], P, build)[:2] if build else (0.0, 0.0)
+        out += hazard.node_text(P, tex_path(folder, files['hazard'], base), lo, top)
     return out
 
 
@@ -4623,6 +4647,12 @@ def export_maps(src_dir, name, P, jobs, folder, size=None, flip=True, log=print,
                 save_colour_dds(em, path, DDS_CODEC.get(fmt, 'DXT1'), flip)
             else:
                 Image.fromarray(em).save(path, 'PNG')
+        elif kind == 'biomes':
+            bl, img = kop_biomes(P, src_dir, True)
+            if fmt == DDS_PAL:
+                kopmod.save_palette_dds(img, path, flip)
+            else:
+                Image.fromarray(img).save(path, 'PNG')
         elif kind == 'clouds':
             if not has_clouds(P):
                 log('no clouds on this planet - skipped')
@@ -4631,6 +4661,19 @@ def export_maps(src_dir, name, P, jobs, folder, size=None, flip=True, log=print,
                 written.append(w)
                 log('exported ' + w)
             continue
+        elif kind == 'hazard':
+            if not hazard.has(P):
+                log('no hazard map on this planet - skipped')
+                continue
+            hmap, hlo, htop, hshare = hazard.from_build(sys.modules[__name__], P, src_dir, name, size)
+            if hshare <= 0:
+                log('nothing on this planet is hazardous with these settings - skipped')
+                continue
+            g = (np.clip(hmap, 0, 1) * 255 + 0.5).astype(np.uint8)
+            if fmt == DDS_L8:
+                save_l8_dds(g, path, flip)
+            else:
+                Image.fromarray(g).save(path, 'PNG')
         elif kind == 'aurora':
             if not has_aurora(P):
                 log('no aurora on this planet - skipped')
@@ -4659,11 +4702,379 @@ def export_maps(src_dir, name, P, jobs, folder, size=None, flip=True, log=print,
                 del files['emissive']
             if 'ring' in names and has_rings(P) and os.path.isfile(os.path.join(src_dir, name + '_ring.png')):
                 files['ring'] = names['ring']
+            if 'biomes' in names:
+                files['biomes'] = names['biomes']
+            if 'hazard' in names and hazard.has(P) and names['hazard'].lower().endswith('.dds'):
+                files['hazard'] = names['hazard']
             with open(path, 'w', newline='\n') as f:
-                f.write(kopernicus_snippet(P, info, files, folder, cfg_path))
+                f.write(kopernicus_snippet(P, info, files, folder, cfg_path, src_dir))
         written.append(path)
         log('exported ' + path)
     return written
+
+
+
+KOP_DEFAULTS = {'gravity': 0.0, 'rotation': 6.0, 'albedo': 0.3, 'pressure': 101.325, 'temperature': 288.0, 'atmo_height': 70.0,
+                'molar_mass': 0.029, 'adiabatic': 1.4, 'ground': 'Moho rock'}
+KOP_ATMO = True
+_KOP_CACHE = {}
+_BIO_CRATERS = {}
+
+
+def kop_build(P):
+    name = P['name']
+    best = None
+    if os.path.isdir(OUTROOT):
+        for d in os.listdir(OUTROOT):
+            if d != name and not (d.startswith(name + '_') and d[len(name) + 1:].isdigit()):
+                continue
+            p = os.path.join(OUTROOT, d, name + '_height.png')
+            if os.path.isfile(p) and os.path.isfile(os.path.join(OUTROOT, d, name + '_info.json')):
+                if best is None or os.path.getmtime(p) > best[0]:
+                    best = (os.path.getmtime(p), os.path.join(OUTROOT, d))
+    return best[1] if best else None
+
+
+def kop_height(build, name):
+    p = os.path.join(build, name + '_height.png')
+    key = (p, os.path.getmtime(p))
+    if _KOP_CACHE.get('key') != key:
+        hm, info = load_height(build, name)
+        lo, hi = float(hm.min()), float(hm.max())
+        small = np.asarray(Image.fromarray(hm.astype(np.float32), 'F').resize((1024, 512), Image.BOX))
+        _KOP_CACHE.update(key=key, small=small, lo=lo, hi=hi)
+    return _KOP_CACHE
+
+
+def kop_prepare(P):
+    return {}
+
+
+def kop_locked(P):
+    return {}
+
+
+def kop_shape(P, build):
+    if build:
+        h = kop_height(build, P['name'])
+        lo, hi = h['lo'], h['hi']
+    else:
+        lo, hi = float(P['relief']['low']), float(P['relief']['high'])
+    return {'R': float(P['radius']), 'g': P['planet']['gravity'], 'top': max(hi, 0.0), 'relief': hi - lo, 'min_m': lo, 'max_m': hi}
+
+
+def kop_light(P):
+    if has_atmo(P):
+        c = np.array(colour_from_beta(atmo_e(P)['m_betaR']), np.float64)
+    else:
+        c = np.array(planet_tint(P), np.float64)
+    c = np.maximum(c / max(c.max(), 1.0), 0.05)
+    return list(0.475 * c ** -0.25)
+
+
+def kop_orbit_colour(P):
+    c = np.array(planet_tint(P), np.float64)
+    return list(c / max(c.max(), 1.0) * 0.8)
+
+
+BIO_WHERE = ('any', 'land', 'ocean', 'shore', 'ice', 'lava', 'craters', 'features')
+FEATURE_NAMES = {'crater': 'Crater', 'basin': 'Basin', 'volcano': 'Volcano', 'mountain': 'Mountain', 'plateau': 'Plateau', 'dome': 'Dome'}
+
+
+def bio_radius(P):
+    return float(P['radius'])
+
+
+def bio_features(P):
+    out, count = [], {}
+    for f in P.get('features') or []:
+        t = FEATURE_NAMES.get(f['type'], f['type'].title())
+        count[t] = count.get(t, 0) + 1
+        out.append(('%s %d (%.0f°, %.0f°, %.0f km)' % (t, count[t], f['lat'], f['lon'], f['size']), f['lat'], f['lon'], f['size'], t))
+    return out
+
+
+BIO_BOWL, BIO_SMALL = -0.2, 0.5
+
+
+def crater_owners(P, CR, W, min_px=1.0):
+    H = W // 2
+    C = P['craters']
+    R = float(P['radius'])
+    fresh, depth = float(C['fresh']), float(C['depth'])
+    D = np.asarray(CR['D'], np.float64)
+    n = len(D)
+    owner = np.full((H, W), -1, np.int32)
+    best = np.zeros((H, W), np.float32)
+    area = np.zeros(n)
+    X, Y, Z = rows_xyz(W, H, 0, H)
+    wt = np.repeat(np.cos(row_lat(H, 0, H)).astype(np.float32)[:, None], W, 1)
+    for k in range(n):
+        Dk = float(D[k])
+        Ra = Dk * 500.0 / R
+        if Ra * W / (2 * math.pi) < min_px:
+            continue
+        c = CR['v'][k]
+        win = spot_window(c, Ra * 1.15, W, H, 0, H, X, Y, Z)
+        if win is None:
+            continue
+        idx, sx, sy, sz = win
+        r = np.arccos(np.clip(sx * c[0] + sy * c[1] + sz * c[2], -1, 1)) / np.float32(Ra)
+        q = np.float32(1.4 / Ra)
+        o = OFF[k % 32]
+        r = r * (1 + np.float32(0.07) * perlin(sx * q + o[0], sy * q + o[1], sz * q + o[2], 7001 + int(CR['id'][k])))
+        deg = float(ss(fresh - 0.15, fresh + 0.15, CR['age'][k]))
+        floor = -(0.95 - 0.4 * float(ss(8, 40, Dk))) * (1 - 0.3 * deg)
+        shp = crater_shape(r, np.float32(floor), np.float32(0.7), np.float32(0.7 * (1 - 0.5 * deg)), np.float32(0.22 + 0.6 * deg))
+        if Dk > 20:
+            shp = shp + np.float32(0.35 * float(ss(20, 60, Dk)) * (1 - 0.5 * deg)) * np.exp(-(r / np.float32(0.22)) ** 2)
+        bowl = shp < np.float32(BIO_BOWL)
+        if not bowl.any():
+            continue
+        dm = np.float32(depth * crater_depth_m(Dk) * (1 - 0.65 * deg) / 0.95)
+        cont = shp * dm
+        cur = owner[idx]
+        cb = best[idx]
+        w = wt[idx]
+        area[k] = float(w[bowl].sum())
+        od = D[np.maximum(cur, 0)]
+        take = bowl & ((cur < 0) | (od < BIO_SMALL * Dk) | ((Dk >= BIO_SMALL * od) & (cont < cb)))
+        cur[take] = k
+        cb[take] = cont[take]
+        owner[idx] = cur
+        best[idx] = cb
+    on = owner >= 0
+    own = np.bincount(owner[on], wt[on], n) if n else np.zeros(0)
+    return owner, np.where(area > 0, own / np.maximum(area, 1e-12), 0.0)
+
+
+def bio_layers(P, build, W):
+    name = P['name']
+    H = W // 2
+    rs = lambda a: np.asarray(Image.fromarray(a.astype(np.float32), 'F').resize((W, H), Image.BOX))
+    kh = kop_height(build, name)
+    h = kh['small']
+    h = h if h.shape == (H, W) else rs(h)
+    R = float(P['radius'])
+    gx, gy = slopes(h, R)
+    slope = np.degrees(np.arctan(np.hypot(gx, gy))).astype(np.float32)
+    ocean = sea_mask(P, h)
+    shore = (~ocean & (h < max(60.0, 0.01 * float(h.max())))) if ocean is not None else None
+    col = np.asarray(Image.open(os.path.join(build, name + '_color.png')).convert('RGB').resize((W, H), Image.BOX)).astype(np.float32)
+    ice_c = np.array(P['colors']['ice'], np.float32)
+    ice = (np.linalg.norm(col - ice_c, axis=2) < 45) & (col.mean(2) > 0.6 * float(ice_c.mean()))
+    lava = None
+    ep = os.path.join(build, name + '_emissive.png')
+    if os.path.isfile(ep):
+        em = np.asarray(Image.open(ep).convert('RGB').resize((W, H), Image.BOX))
+        lava = em.max(2) > 60
+    Pb = bio_built(P, build)
+    cl = crater_list(Pb) or {'v': np.zeros((0, 3)), 'D': np.zeros(0)}
+    fs = bio_features(P)
+    cover = None if has_flowed(Pb) else lava
+    if ocean is not None:
+        cover = ocean if cover is None else ocean | cover
+    fc = [f for f in fs if f[4] in ('Crater', 'Basin')]
+    ck = (kh['key'], W, json.dumps([Pb['craters'], Pb['radius'], fc], sort_keys=True, default=str),
+          None if cover is None else hashlib.md5(np.packbits(cover).tobytes()).hexdigest())
+    if _BIO_CRATERS.get('key') != ck:
+        owner, share = crater_owners(Pb, cl, W) if len(cl['D']) else (None, None)
+        _BIO_CRATERS.update(key=ck, cr=biomemaker.crater_layer(h, cl['v'], cl['D'], R, fc, R, cover, owner, share))
+    cr = copy.deepcopy(_BIO_CRATERS['cr'])
+    return {'h': h, 'slope': slope, 'R': R, 'masks': {'ocean': ocean, 'shore': shore, 'ice': ice if ice.any() else None, 'lava': lava},
+            'craters': cr, 'features': [f[:4] for f in fs]}
+
+
+def bio_built(P, build):
+    p = os.path.join(build, P['name'] + '_preset.json')
+    if os.path.isfile(p):
+        try:
+            with open(p) as f:
+                return normalize(json.load(f))
+        except (OSError, ValueError):
+            pass
+    return P
+
+
+def bio_suggest(P, L):
+    h, masks = L['h'], L['masks']
+    out = []
+    for i, f in enumerate(bio_features(P)):
+        if f[4] != 'Crater' or f[3] >= 50:
+            out.append({'name': 'Great %s' % f[4] if sum(1 for g in bio_features(P) if g[4] == f[4]) == 1 else '%s %d' % (f[4], i + 1),
+                        'where': 'features', 'feature': i, 'value': 1.3})
+    if masks['lava'] is not None and masks['lava'].any():
+        out.append({'name': 'Lava Fields', 'where': 'lava', 'value': 1.3})
+    if masks['ice'] is not None and biomemaker.share(masks['ice']) >= 0.005:
+        out.append({'name': 'Ice and Snow', 'where': 'ice', 'value': 1.2})
+    cr = L['craters']
+    if cr is not None and cr['seen'].any() and float(cr['D'][cr['seen']].max()) >= 20:
+        out.append({'name': 'Big Craters', 'where': 'craters', 'crater_km': biomemaker.big_crater_km(cr, L['R']), 'value': 1.1})
+    ocean = masks['ocean']
+    land = h[~ocean] if ocean is not None and (~ocean).any() else h.ravel()
+    q = [float(round(x, -1)) for x in np.percentile(land, [50, 92])]
+    if ocean is not None:
+        out += [{'name': 'Oceans', 'where': 'ocean'}, {'name': 'Shores', 'where': 'shore'}]
+    out += [{'name': 'Peaks', 'where': 'land' if ocean is not None else 'any', 'hmin': q[1], 'value': 1.2},
+            {'name': 'Highlands', 'where': 'land' if ocean is not None else 'any', 'hmin': q[0], 'value': 1.1},
+            {'name': 'Lowlands', 'where': 'land' if ocean is not None else 'any'}]
+    return out
+
+
+def kop_biomes(P, build, with_map):
+    if biomemaker.has(P):
+        return biomemaker.kop_biomes(sys.modules[__name__], P, build, with_map)
+    C = P['colors']
+    ocean = bool(P['shape']['ocean'])
+    sea = ('Oceans', 'Oceans', 1.0)
+    rows = ([sea, ('Shores', 'Shores', 1.0), ('Lowlands', 'Lowlands', 1.0)] if ocean else
+            [('Basins', 'Basins', 1.0), ('Plains', 'Plains', 1.0)])
+    rows += [('Highlands', 'Highlands', 1.1), ('Peaks', 'Peaks', 1.2)]
+    caps = [(k, n) for k, n in (('cap_north', 'North'), ('cap_south', 'South')) if float(C[k]) < 89.5]
+    rows += [(n + 'PolarCap', n + ' Polar Cap', 1.2) for k, n in caps]
+    if not (with_map and build):
+        return kopmod.biome_set(rows)
+    h = kop_height(build, P['name'])['small']
+    lat = kopmod.lat_grid(h.shape[1])
+    sm = sea_mask(P, h)
+    land = h[~sm] if ocean and (~sm).any() else h.ravel()
+    q = np.percentile(land, [25, 60, 92]) if not ocean else np.percentile(land, [50, 92])
+    if ocean:
+        shore = max(30.0, 0.03 * float(h.max()))
+        masks = [sm, ~sm & (h < shore), (h >= shore) & (h < q[0]), (h >= max(q[0], shore)) & (h < q[1]), h >= q[1]]
+    else:
+        masks = [h < q[0], (h >= q[0]) & (h < q[1]), (h >= q[1]) & (h < q[2]), h >= q[2]]
+    for k, n in caps:
+        masks.append(lat >= float(C[k]) if n == 'North' else lat <= -float(C[k]))
+    return kopmod.biome_set(rows, masks)
+
+
+def kop_mods(P, tex, shape):
+    span = shape['max_m'] - shape['min_m']
+    mods = [['VertexHeightMap', [('map', tex['height']), ('offset', '%.1f' % shape['min_m']), ('deformity', '%.1f' % span),
+                                 ('scaleDeformityByRadius', 'false'), ('order', '20'), ('enabled', 'true')]]]
+    if tex.get('heightfine'):
+        mods.append(['VertexHeightMap', [('map', tex['heightfine']), ('offset', '0'), ('deformity', '%.2f' % (span / 255.0)),
+                                         ('scaleDeformityByRadius', 'false'), ('order', '21'), ('enabled', 'true')]])
+    mods.append(['VertexColorMap', [('map', tex['color']), ('order', '9999993'), ('enabled', 'true')]])
+    if tex.get('emissive'):
+        mods.append(['VertexColorMapEmissive', [('blendMode', 'Additive'), ('map', tex['emissive']), ('brightness', '1'),
+                                                ('order', '9999994'), ('enabled', 'true')]])
+    if P['shape']['ocean']:
+        mods.append(['QuadEnhanceCoast', [('coastLessThan', '1'), ('oceanFactor', '1'), ('order', '200'), ('enabled', 'true')]])
+    return mods
+
+
+def kop_ocean(P, tex):
+    def col(c):
+        return '%.3f,%.3f,%.3f,1' % tuple(v / 255.0 for v in c)
+    if is_lava_sea(P):
+        lc, hc, cc = [list(v) for v in lava_paint(P)]
+        node = ['Ocean', [('ocean', 'true'), ('density', '2.6'), ('oceanColor', col(lc)),
+                          ['Material', [('color', col(lc)), ('colorFromSpace', col([v * 0.55 for v in lc]))]],
+                          ['Fog', [('fogColorStart', col(hc)), ('fogColorEnd', col(cc))]]]]
+        if tex.get('emissive'):
+            node[1].append(['Mods', [['VertexColorMapEmissive', [('blendMode', 'Additive'), ('map', tex['emissive']), ('brightness', '1'),
+                                                                 ('order', '9999994'), ('enabled', 'true')]]]])
+        return node
+    if has_liquid(P):
+        C = P['colors']
+        return ['Ocean', [('ocean', 'true'), ('density', '1'), ('oceanColor', col(C['deep'])),
+                          ['Material', [('color', col(C['shallow'])), ('colorFromSpace', col(C['deep']))]],
+                          ['Fog', [('fogColorStart', col(C['shallow'])), ('fogColorEnd', col(C['deep']))]]]]
+    return None
+
+
+def kop_scaled_extra(P, tex):
+    if tex.get('emissive'):
+        return [['VertexColorMapEmissive', [('blendMode', 'Additive'), ('map', tex['emissive']), ('brightness', '1')]]]
+    return []
+
+
+def kop_rings(P, tex):
+    if not (has_rings(P) and tex.get('ring')):
+        return None
+    r = ring_entry(P.get('rings'))
+    return ['Rings', [['Ring', [('innerRadius', '%d' % round(r['inner'] * 1000)), ('outerRadius', '%d' % round(r['outer'] * 1000)),
+                                ('angle', '%g' % float(r['angle'])), ('texture', tex['ring']), ('color', '1,1,1,1'),
+                                ('lockRotation', 'false'), ('useNewShader', 'true')]]]]
+
+
+def kop_textures(P, build, tdir):
+    name = P['name']
+    j = lambda f: os.path.join(tdir, f)
+    out = [(j(name + '_height.dds'), 'height map', 'height'), (j(name + '_heightfine.dds'), 'fine height map', 'heightfine'),
+           (j(name + '_color.dds'), 'colour map', 'color'), (j(name + '_normal.dds'), 'normal map', 'normal')]
+    if build and os.path.isfile(os.path.join(build, name + '_emissive.png')):
+        out.append((j(name + '_emissive.dds'), 'lava glow', 'emissive'))
+    if has_rings(P) and (not build or os.path.isfile(os.path.join(build, name + '_ring.png'))):
+        out.append((j(name + '_ring.dds'), 'ring texture', 'ring'))
+    if hazard.has(P):
+        out.append((j(name + '_hazard.dds'), 'hazard map', 'hazard'))
+    if has_aurora(P):
+        out += [(j(name + '_aurora.dds'), 'aurora texture', None), (j(name + '_aurora_top.dds'), 'aurora texture (top)', None)]
+    if has_clouds(P):
+        for n, F in cloud_files(tdir, name, cloud_entry(P.get('clouds'))).items():
+            if isinstance(F, dict):
+                out += [(F[k], 'cloud %s (%s)' % (k, n), None) for k in sorted(F)]
+    return out
+
+
+def kop_cloud_cfgs(P):
+    out = []
+    if has_clouds(P):
+        out.append((P['name'] + '_clouds.cfg', 'clouds (EVE)'))
+    if has_aurora(P):
+        out.append((P['name'] + '_aurora.cfg', 'aurora (EVE)'))
+    return out
+
+
+def kop_write_textures(P, build, tdir, cloud_dir, rel, log):
+    name = P['name']
+    jobs = [('height', name + '_height', DDS_L8), ('heightfine', name + '_heightfine', DDS_L8),
+            ('color', name + '_color', DDS_BC1), ('normal', name + '_normal', DDS_NM)]
+    if os.path.isfile(os.path.join(build, name + '_emissive.png')):
+        jobs.append(('emissive', name + '_emissive', DDS_BC1))
+    if has_rings(P) and os.path.isfile(os.path.join(build, name + '_ring.png')):
+        jobs.append(('ring', name + '_ring', DDS_BC3))
+    if hazard.has(P):
+        jobs.append(('hazard', name + '_hazard', DDS_L8))
+    written = export_maps(build, name, P, jobs, tdir, log=log)
+    cfgs = []
+    for done in ([export_clouds(P, name, name, tdir, True, log, rel(tdir))] if has_clouds(P) else []) + \
+            ([export_aurora(P, name, name + '_aurora', DDS_BC3, tdir, True, log, rel(tdir))] if has_aurora(P) else []):
+        for w in done:
+            (cfgs if w.endswith('.cfg') else written).append(w)
+    return written, cfgs
+
+
+def kop_body_extra(P, tex):
+    if not (hazard.has(P) and tex.get('hazard')):
+        return []
+    b = kop_build(P)
+    lo, top = hazard.build_info(sys.modules[__name__], P, b)[:2] if b else (0.0, 0.0)
+    return [hazard.node(P, tex['hazard'], lo, top)]
+
+
+def kop_extras(P, plan, rel, mod):
+    name = P['name']
+    out = []
+    if has_atmo(P):
+        full = atmo_planets(P, name)
+        out += [(plan['atmo'], atmo_cfg(P, name), 'Scatterer atmosphere', atmo_cfg(P, name)),
+                (plan['plist'], lambda t: kopmod.merge_planets_list(t, full, name), 'Scatterer planet list', full)]
+    if has_clouds(P) and plan.get('pqs'):
+        out.append((plan['pqs'], lambda t: kopmod.merge_pqs(t, name), 'cloud PQS list', ''))
+    return out
+
+
+def kop_preview_extra(P, rel, tdir):
+    out = {}
+    if has_clouds(P):
+        out['Clouds (EVE)'] = cloud_cfg(P, P['name'], rel(tdir) + '/' + P['name'])
+    if has_aurora(P):
+        out['Aurora (EVE)'] = aurora_cfg(P, P['name'], rel(tdir) + '/' + P['name'] + '_aurora', rel(tdir) + '/' + P['name'] + '_aurora_top')
+    return out
 
 
 def preset_path(p):
@@ -4745,7 +5156,7 @@ def cmd_make(a):
         Image.fromarray(ring_image(P), 'RGBA').save(rp)
     elif os.path.isfile(rp):
         os.remove(rp)
-    info = {'min_m': lo, 'max_m': hi, 'radius': P['radius'], 'ocean': P['shape']['ocean'], 'res': W, 'version': APP_VERSION}
+    info = {'min_m': lo, 'max_m': hi, 'radius': P['radius'], 'ocean': bool(P['shape']['ocean']), 'res': W, 'version': APP_VERSION}
     with open(os.path.join(od, P['name'] + '_info.json'), 'w') as f:
         json.dump(info, f, indent=1)
     with open(os.path.join(od, P['name'] + '_preset.json'), 'w') as f:
@@ -4785,6 +5196,8 @@ def cmd_export(a):
         jobs.append(('aurora', P['name'] + '_aurora', {'dds': DDS_BC3, 'png': 'PNG'}[a.aurora]))
     if a.ring != 'none' and has_rings(P):
         jobs.append(('ring', P['name'] + '_ring', {'dds': DDS_BC3, 'bc3': DDS_BC3, 'bc7': DDS_BC7, 'png': 'PNG'}[a.ring]))
+    if a.hazard != 'none' and hazard.has(P):
+        jobs.append(('hazard', P['name'] + '_hazard', {'dds': DDS_L8, 'png': PNG8}[a.hazard]))
     if a.config:
         jobs.append(('config', P['name'] + '_kopernicus', CFG))
     export_maps(src, P['name'], P, jobs, a.to, a.size, not a.no_flip, cfg_path=a.config_path)
@@ -4827,6 +5240,7 @@ def main():
     e.add_argument('--clouds', default='tvc', choices=['tvc', 'none'])
     e.add_argument('--emissive', default='dds', choices=['dds', 'bc7', 'png', 'none'])
     e.add_argument('--ring', default='dds', choices=['dds', 'bc3', 'bc7', 'png', 'none'])
+    e.add_argument('--hazard', default='dds', choices=['dds', 'png', 'none'])
     e.add_argument('--size', type=int, default=None)
     e.add_argument('--no-flip', action='store_true')
     n = sp.add_parser('new')

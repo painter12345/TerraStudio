@@ -1,5 +1,89 @@
 # Changelog
 
+## 1.0.0
+
+- Hazard map: makes lava or a deadly sea (acid, molten metal, anything) hurt
+  craft through Kopernicus' HazardousBody. Pick what is deadly (lava fields, flows, rivers and lava sea; the
+  sea; or both), the temperature craft are heated towards, how far the heat spreads past the edge and how high
+  it reaches. Export writes <name>_hazard.dds (greyscale L8, white = full heat, same layout as the height map)
+  and the Kopernicus config gets a HazardousBody node with the map and an AltitudeCurve; Export to mod does
+  both. The tab shows the heat on a map. Export row "Hazard map", command line `export --hazard dds|png|none`.
+- Hazard map: rivers. The rivers from the Landforms tab can carry the deadly stuff too: water rivers when
+  the sea is deadly, lava rivers (Lava tab, More glow) when the lava is. Tick "The rivers carry it too"
+  (on by default), or pick "Only the rivers" under What is deadly. The river channels are traced from the
+  same river network as the build, so they line up with the rivers in the colour map.
+- New Biome Map Maker (Biome maps... at the top): make your own biomes with a name, a science value and a
+  colour, and rules for where each one goes: in the ocean, on the shores, on land, on ice and snow, on glowing lava, in big craters
+  or in a placed feature, height, slope and latitude.
+  The first biome whose rules fit a spot gets it, so the order counts. Paint biomes straight onto the
+  map with a brush, or erase painting to get the rules back. It shows the biomes over the planet with
+  their share of the surface, and suggests a first set from the build (ice and snow, oceans, shores, peaks, highlands,
+  lowlands, lava fields, big craters and the features you placed). Export to mod on the Config
+  tab writes these biomes and their map; Save biome map... and Copy Biomes node give you the PNG and the
+  config node on their own.
+- Biome maps: In big craters now only takes the craters you can still see in the build, measured from
+  its heights, so craters buried under lava flows or worn flat are left out, and your placed craters and
+  basins count too. Under a lava or water sea a crater only counts when its rim shows as a ring around
+  it, and a crater cut by glowing lava cracks only when most of its rim is clear of the lava. The craters
+  come from the build itself, so changing the crater settings after building no longer moves them. The
+  suggested Big Craters size no longer falls to the smallest crater when craters cover little of the
+  surface.
+- Biome maps: In big craters now uses the crater generator's own maths. Each crater biome has the exact
+  outline of the crater's bowl as it was drawn (its wobbly edge included) at its exact spot, instead of
+  a circle. Where two craters of similar size overlap, each spot goes to the one whose bowl is deeper
+  there; a crater much smaller than the one it sits in counts as part of the bigger one. A crater that
+  keeps less than half of its bowl this way is left out, and the heights still decide whether a crater
+  can be seen at all (worn flat, buried under lava, under the sea). The suggested Big Craters size now
+  takes in the biggest craters covering about 15 % of the surface (was 5 %).
+- Biome maps: painting shows the stroke straight away, and Paint and Erase show the brush size as a
+  circle on the map.
+- Biome maps: a new Relief switch shades the map with the build's heights, so craters and other
+  landforms show even where flowed lava paints over them.
+- Biome maps are written as a DDS with an 8-bit palette (Kopernicus' palette format, which keeps the
+  exact biome colours, and one GIMP can open) instead of a PNG, by Export to
+  mod, Save biome map... and the Export window. The Export window has a new Biome map row (DDS or PNG),
+  and with it ticked its Kopernicus config gets biomeMap and the Biomes node.
+- New Config tab, the same as in Gas Giant Studio: fill in the display name, description, what the
+  planet orbits, gravity, day length, the orbit and the atmosphere you can fly in, and it writes the
+  whole Kopernicus config. It works out the mass and density, orbital period and sphere of influence
+  (from the parent in your mod), the pressure and temperature curves, time warp limits, science
+  altitudes, the close-up terrain (PQS) distances the way the rocky bodies in your mod have them, and
+  a biome map from the build's heights (oceans, shores, lowlands, highlands, peaks, polar caps).
+  Gravity 0 means "like Kerbin for its size". "Close-up ground textures" picks the PQS textures.
+- Kopernicus options: every line of the config can be left out or given your own value, and the other
+  options from the Kopernicus wiki can be ticked on.
+- Export to mod: pick your mod's folder in GameData and it writes everything where the mod keeps it:
+  height, fine height, colour, normal, glow, ring, cloud and aurora textures in Textures/PluginData, the
+  config in Configs/<star> (or next to the body it orbits), the EVE clouds and aurora in
+  Configs/volumetricclouds/Clouds (and adds the planet to pqs.cfg), the Scatterer atmosphere in
+  Scatterer/Planets and its entry in planetsList_<star>.cfg. Exporting again replaces the planet's own
+  files instead of adding a second copy, and every file that is already there is backed up first.
+- Code boxes scroll up again: the mouse wheel scrolls the box until its top or bottom and only then the
+  page.
+- Number fields no longer round their value when you only click into them and out again.
+- Placed craters have a Central peak setting on the Features tab: 1 = the full knob in the middle of
+  craters wider than 20 km (as before), 0 = no knob, anything between makes it lower.
+
+## 0.2.0
+
+- Lava: a second style next to the torn plates, "Flowed and cooled", made to look like Anneheg in the
+  Kcalbeloh System. The lava fills the low ground (below the lava level, or the whole sea on a planet with
+  an ocean) and its surface is worked out as if it had really flowed: divergence-free currents, eddies and
+  streams along the shores carry it along, stretching it into streaks and folding it into swirls. The
+  molten lava glows red at the shore and hotter further out, with crisp floes of crust, crumbs around them
+  and thin glowing cracks, and lights up the foot of the rock around it. Everywhere else it has cooled into
+  rock that keeps the flow lines, as streaks of colour and low frozen ridges. Lava level, flow, eddy size,
+  flow along the shores, how far from the shore it gets hot, crust floes, glowing cracks, shore glow reach,
+  flow lines and ridges on the rock and their colour; amount, seed, the lava colours, heated edges and glow
+  are shared with the plates. It goes into the colour map and the emissive map, and with an ocean the
+  Kopernicus config writes the ocean in the lava colours.
+- New preset FlowedMoon.
+- Presets with torn plates, lava oceans and everything else look exactly the same.
+- Normal map: now made the way GIMP's Filters → Generic → Normal Map makes it from the height map (the same
+  numbers as GEGL's normal-map operation), with wrap-around at the left and right edges and flat oceans.
+  New "Normal map scale" on the Relief tab (GIMP's Scale, default 10); Relief strength now only sets the
+  preview. The green channel points the other way than in earlier versions, so re-export normal maps.
+
 ## 0.1.17
 
 - Rings tab (from Gas Giant Studio): rings with wide zones, ringlets, gaps, soft edges,

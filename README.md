@@ -43,7 +43,9 @@ yours complains, you can run Terra Studio from source instead; it's the same pro
 - **Relief:** the height range in metres (highest point and lowest point), mountains
   (long ranges, their size, area and sharpness), ranges that follow the coasts, hills,
   flat plains, fine roughness, the width of the shallow shelf around the coasts, and how
-  strong the relief looks in the normal map.
+  strong the relief looks in the preview. The normal map is made the way GIMP's
+  Filters → Generic → Normal Map makes it from the height map; **Normal map scale** is
+  GIMP's Scale (default 10).
 - **Landforms:**
   - **Rivers and valleys:** water runs downhill from all the land, gathers into rivers
     that join and get wider downstream, and ends in the sea (or the lowest basins on a dry
@@ -82,6 +84,12 @@ yours complains, you can run Terra Studio from source instead; it's the same pro
   hottest point, which is an open lava sea with floating rafts of crust. **All over** tears the
   whole crust instead (for tidally heated moons), and lava pools can be added anywhere in the
   torn area. The glow goes into an emissive map that the previews show too.
+- **Flowed lava:** the second lava style, like Anneheg in the Kcalbeloh System. Lava fills the low
+  ground (below a lava level, or the whole sea on a planet with an ocean) and its surface is worked
+  out as if it had really flowed: currents, eddies and streams along the shores stretch it into
+  streaks and fold it into swirls. The molten lava glows red at the shore and hotter further out,
+  with floes of crust and thin glowing cracks; the rest has cooled into rock that keeps the flow
+  lines, as streaks of colour and low frozen ridges.
 - **Lava oceans and rivers:** fill the oceans with lava (floating crust, glowing shores) and let
   the rivers, cracks and volcanoes glow. Everything that glows goes into one emissive map.
 - **Atmosphere:** a Scatterer atmosphere with Scatterer's own values (HR, m_betaR, HM,
@@ -101,6 +109,8 @@ yours complains, you can run Terra Studio from source instead; it's the same pro
   brightness and all six colours. The **Aurora** view shows both poles from above. Export
   writes the two textures and an EVE config that stacks them as thin layers at different
   heights, so the aurora has depth when you see it from the side.
+- **Hazard map:** lava, or a deadly sea of any liquid, heats craft that come near it (Kopernicus'
+  HazardousBody). Export writes the heat map and the config node.
 - **Rings:** a Kopernicus ring with wide zones, ringlets, gaps, soft edges and three
   colours (auto from the planet's colours). The Rings tab shows the planet with its rings
   and ring shadow. Build writes the ring texture; Export saves it and adds the Rings node to
@@ -128,6 +138,38 @@ yours complains, you can run Terra Studio from source instead; it's the same pro
 ![Clouds](docs/clouds.png)
 
 ![Aurora](docs/aurora.png)
+
+## Biome maps
+
+**Biome maps...** at the top opens the Biome Map Maker. Each biome has a name, a science value, a colour and
+rules for where it goes: in the ocean, on the shores, on land, on ice and snow, on glowing lava,
+in big craters, in a placed feature, a height range, a slope range and a latitude range
+(for both hemispheres or just one). A spot gets the first biome in the list whose rules fit, so put the
+special biomes first and a catch-all last; leave a field empty for no limit. **Paint** puts the chosen biome
+anywhere with a brush, **Erase** gives the spot back to the rules. The map shows the biomes over the planet and
+their share of the surface; the first time it suggests a set from the build. Export to mod on the Config
+tab writes the biome map and the Biomes node; **Save biome map...** and **Copy Biomes node** give them to you
+on their own, and **Export...** has a Biome map row too (its Kopernicus config then gets biomeMap and the
+Biomes node). The biome map is a DDS with an 8-bit (256-colour) palette, which Kopernicus reads with the exact
+biome colours and GIMP can open; Save biome map... and Export... can also
+write a PNG. Heights are above sea level. **In big craters** takes the craters of at least the size you give
+that can still be seen in the build, plus your placed craters and basins. Craters buried under lava flows or
+later craters, or worn too flat to stand out from the ground around them, are left out. Under a lava or water
+sea a crater counts only when its rim shows as a ring around it, and next to glowing lava only when most of
+its rim is clear of the lava. **Relief** shades the map with the heights, so craters show even where flowed
+lava paints over them.
+
+## Putting the planet into your mod
+
+The **Config** tab writes the whole Kopernicus config, the same way as in Gas Giant Studio. Fill in the
+display name, description, the body it orbits, gravity, day length, the orbit and (if you want one) the
+atmosphere you can fly in. The tab works out the mass, orbital period, pressure and temperature curves,
+time warp limits, science altitudes, the PQS distances and a biome map from the build. **Kopernicus
+options** lets you leave out any line, give it your own value, or add the other options from the
+Kopernicus wiki. **Export to mod** writes the maps to `Textures/PluginData`, the config to
+`Configs/<star>/<Planet>.cfg`, the clouds and aurora to `Configs/volumetricclouds/Clouds` and the
+Scatterer files to `Scatterer`, merges the planet into `pqs.cfg` and `planetsList_<star>.cfg`, and
+backs up anything it replaces. Exporting again replaces the planet's own files.
 
 ## Export
 
@@ -336,6 +378,19 @@ and an empty coverage map that keeps the layers out of the volumetric clouds). T
 **Drift speed** is EVE's `speed`, so the aurora slowly turns around the pole. The tab
 also shows the config to copy.
 
+### Hazard map
+
+On the Lava tab, tick **Hazard map** to make the lava, or a deadly sea (acid, molten metal,
+anything), hurt craft. It uses Kopernicus' `HazardousBody`: every vessel near the hot ground is
+heated towards **Temperature (K)** (`ambientTemp`; most parts burn up somewhere between 1200 and
+2500 K). Export writes `<name>_hazard.dds`, a greyscale map in the same layout as the height map
+(white = full heat, fading out over **Heat spreads (km)** past the edge), and the Kopernicus
+config gets the node with `HeatMap` and an `AltitudeCurve` (Kopernicus measures it from the
+planet's centre): full heat up to the highest hot ground, gone **Heat reaches up (m)** above it.
+**What is deadly** picks lava (fields, flows and a lava sea), the sea, both, or only the rivers.
+With **The rivers carry it too** the rivers from the Landforms tab are deadly as well: the water
+rivers when the sea is, the lava rivers when the lava is.
+
 ### Rings
 
 Tick **This planet has rings** on the Rings tab. Build writes `<name>_ring.png`, a strip
@@ -346,7 +401,7 @@ Kopernicus config gets a `Rings` node with `innerRadius` and `outerRadius` (plan
 
 ## Presets
 
-Every planet is one small JSON file in `presets/`. Eleven examples come with it:
+Every planet is one small JSON file in `presets/`. Thirteen examples come with it:
 
 | Preset | Look |
 |---|---|
@@ -361,6 +416,7 @@ Every planet is one small JSON file in `presets/`. Eleven examples come with it:
 | TornLava | a world close to its star, its day side ripped into lava plates around a lava sea |
 | LavaMoon | a small moon torn into plates all over, with lava pools |
 | MoltenWorld | an ordinary rocky planet with lava rivers, glowing volcanoes and a lava ocean |
+| FlowedMoon | a black, Anneheg-like moon with seas of flowed lava, crust floes and cooled flow lines on the rock |
 
 **New...** starts a planet as a copy of the one you have open, with a new seed. Builds go
 to `out/<name>/` (4096) and `out/<name>_<size>/` (other sizes). Every build also saves the
@@ -379,7 +435,7 @@ python terrain.py new MyWorld --template GreyMoon
 `export` options: `--height dds|png|png8|none`, `--fine dds|png|none`,
 `--color dds|bc1|bc3|bc7|png|jpg|tga|bmp|none`, `--normal dds|bc5|png|none`,
 `--preview png|jpg|none`, `--config`, `--config-path PATH`, `--atmo cfg|none`,
-`--aurora dds|png|none`, `--clouds tvc|none`, `--emissive dds|bc7|png|none`, `--size 2048`, `--no-flip`. The Scatterer config is written when
+`--aurora dds|png|none`, `--clouds tvc|none`, `--hazard dds|png|none`, `--emissive dds|bc7|png|none`, `--size 2048`, `--no-flip`. The Scatterer config is written when
 the planet has an atmosphere, unless you give `--atmo none`, and the aurora when it has
 one, unless you give `--aurora none`.
 

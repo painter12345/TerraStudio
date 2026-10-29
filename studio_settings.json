@@ -1,0 +1,105 @@
+{
+ "recent_colours": [
+  [
+   216,
+   207,
+   69
+  ],
+  [
+   204,
+   208,
+   75
+  ],
+  [
+   193,
+   195,
+   156
+  ],
+  [
+   129,
+   131,
+   73
+  ],
+  [
+   166,
+   172,
+   61
+  ],
+  [
+   188,
+   194,
+   91
+  ],
+  [
+   168,
+   171,
+   72
+  ],
+  [
+   136,
+   137,
+   53
+  ],
+  [
+   89,
+   87,
+   49
+  ],
+  [
+   167,
+   205,
+   218
+  ],
+  [
+   120,
+   206,
+   229
+  ],
+  [
+   86,
+   171,
+   193
+  ],
+  [
+   99,
+   151,
+   174
+  ],
+  [
+   152,
+   206,
+   233
+  ]
+ ],
+ "export_dir": "C:/Users/justu/my star system/GameData/GinnungagapSystem/Textures/PluginData",
+ "size": "Same as build",
+ "flip": true,
+ "cfg_path": "",
+ "fmt_height": "DDS L8 (KSP default)",
+ "on_height": false,
+ "fmt_heightfine": "DDS L8 (KSP default)",
+ "on_heightfine": false,
+ "fmt_color": "DDS BC1 / DXT1 (KSP default)",
+ "on_color": false,
+ "fmt_normal": "DDS DXT5nm (KSP default)",
+ "on_normal": false,
+ "fmt_emissive": "DDS BC1 / DXT1 (KSP default)",
+ "fmt_preview": "PNG",
+ "on_preview": false,
+ "fmt_config": "Kopernicus .cfg",
+ "on_config": false,
+ "fmt_atmo": "Scatterer cfg",
+ "fmt_clouds": "EVE + True Volumetric Clouds",
+ "fmt_aurora": "DDS BC3 / DXT5 (with alpha)",
+ "fmt_ring": "DDS BC3 / DXT5 (with alpha)",
+ "on_ring": false,
+ "fmt_biomes": "DDS 8-bit palette",
+ "on_biomes": false,
+ "on_atmo": false,
+ "on_clouds": false,
+ "fmt_pxnormal": "DDS DXT5nm (KSP default)",
+ "fmt_parallax": "Parallax .cfg",
+ "on_aurora": false,
+ "fmt_spve": "SPVE effects (EVE V5)",
+ "on_spve": true
+}
